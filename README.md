@@ -1,36 +1,79 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Superdarts
 
-## Getting Started
+A darts scorer, practice tool and stats tracker for a group of friends. It's built for an iPad on the wall next to the board, installed to the home screen as a web app.
 
-First, run the development server:
+- **Practice**: free throw, solo X01, checkouts, doubles, around the clock, Bob's 27 and Shanghai.
+- **Match**: X01 (301/501/701) on one device. Pick the players, legs or sets, and double, master or straight out. Every dart counts on each player's profile.
+- **Online**: not built yet. Private rooms with cameras come next.
+- **Profiles**: 3-dart and first-9 averages, checkout rate, hit rate on each double, 180s/140+/100+, best leg, where your darts land on the board, match form, and personal bests for each drill. You can filter by matches or practice, and by the last 30 days.
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+Stack: Next.js 16 (App Router), Supabase Auth (Google), Postgres with Drizzle, Tailwind 4.
+
+## How it works
+
+You enter one dart per tap. A game is just a list of darts. The engine in `src/lib/darts` replays that list to get the scoreboard, so undo means replaying one dart fewer.
+
+The game in progress is stored on the device (`localStorage`). A dropped connection or a closed app never loses darts. When a game ends it goes into a save queue, and the server replays the same darts to work out the stats it stores. If you're offline, the home screen sends queued games once you're back online. Saves are idempotent.
+
+```
+src/lib/darts/        game engine, checkout routes, stats (pure TS, unit tested)
+src/app/play/         the counter: pad, scoreboards, end-of-game summary
+src/app/practice/     drill picker
+src/app/match/        player and format picker
+src/app/players/      player list and profile stats
+src/app/actions.ts    server actions (save game, add guest, edit profile)
+src/db/schema.ts      Drizzle schema
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 1. Supabase project
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. Create a project at [supabase.com](https://supabase.com).
+2. **Google OAuth**: in Google Cloud Console, create an OAuth client of type *Web application*. Add `https://<project-ref>.supabase.co/auth/v1/callback` as an authorised redirect URI.
+3. In Supabase, go to **Authentication → Sign In / Providers → Google**. Enable it and paste the client ID and secret.
+4. In Supabase, go to **Authentication → URL Configuration**:
+   - Site URL: your deployed URL, e.g. `https://superdarts.vercel.app`
+   - Redirect URLs: `https://superdarts.vercel.app/auth/callback` and `http://localhost:3000/auth/callback`
 
-## Learn More
+### 2. Environment
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+cp .env.example .env.local
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Fill in the Supabase URL, the publishable key and the database connection strings. Find them in the Supabase dashboard under **Connect**. Set `ALLOWED_EMAILS` to your group's Google addresses so nobody else can sign in.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 3. Database
 
-## Deploy on Vercel
+```bash
+pnpm install
+pnpm db:migrate
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+This creates the tables with row-level security turned on and no policies. The app talks to Postgres directly through Drizzle, so turning on RLS only closes Supabase's public REST API to these tables.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### 4. Run
+
+```bash
+pnpm dev
+```
+
+### 5. Deploy
+
+Deploy to Vercel or any Node host and set the same environment variables. Then open the site in Safari on the iPad, tap **Share → Add to Home Screen**, and sign in once. The session lasts until you sign out.
+
+## Local Supabase (optional)
+
+`supabase start` runs a local stack on ports 55421 (API) and 55422 (Postgres). These are set in `supabase/config.toml` so they don't clash with other projects. Google sign-in only works locally if you add Google credentials to that config, so the simplest option is to point `.env.local` at your hosted project.
+
+## Scripts
+
+| Command | What it does |
+| --- | --- |
+| `pnpm dev` | Dev server |
+| `pnpm test` | Engine and stats unit tests |
+| `pnpm typecheck` | Route types + TypeScript |
+| `pnpm db:generate` | New migration after editing `src/db/schema.ts` |
+| `pnpm db:migrate` | Apply migrations |
+| `pnpm db:studio` | Browse the database |
