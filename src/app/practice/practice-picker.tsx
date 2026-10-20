@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Segmented, Sheet } from "@/components/ui";
 import { MODES, type ModeId } from "@/lib/darts/modes";
 import { checkoutTargets, doublesTargets } from "@/lib/darts/modes/practice";
@@ -54,6 +54,8 @@ function buildConfig(mode: ModeId, o: Opts) {
 
 export function PracticePicker({ me }: { me: GamePlayer }) {
   const router = useRouter();
+  // The counter has no server data, so it can be fully loaded before Start is tapped.
+  useEffect(() => router.prefetch("/play"), [router]);
   const [open, setOpen] = useState<Drill | null>(null);
   const [opts, setOpts] = useState<Opts>({});
 

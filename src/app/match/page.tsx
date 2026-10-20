@@ -4,8 +4,7 @@ import { listPlayers } from "@/lib/queries";
 import { MatchSetup } from "./match-setup";
 
 export default async function MatchPage() {
-  const me = await getCurrentPlayer();
-  const all = await listPlayers();
+  const [me, all] = await Promise.all([getCurrentPlayer(), listPlayers()]);
   // You're the most likely player, so you come first.
   const players = [...all.filter((p) => p.id === me.id), ...all.filter((p) => p.id !== me.id)];
 

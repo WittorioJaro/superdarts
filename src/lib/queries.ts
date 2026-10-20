@@ -27,20 +27,16 @@ export interface GameRow {
 }
 
 export async function recentGames(playerId: string, limit = 8): Promise<GameRow[]> {
-  const mine = await db
+  const mine = db
     .select({ id: games.id })
     .from(gamePlayers)
     .innerJoin(games, eq(games.id, gamePlayers.gameId))
     .where(eq(gamePlayers.playerId, playerId))
     .orderBy(desc(games.finishedAt))
     .limit(limit);
-  if (mine.length === 0) return [];
 
   const rows = await db.query.games.findMany({
-    where: inArray(
-      games.id,
-      mine.map((g) => g.id),
-    ),
+    where: inArray(games.id, mine),
     columns: { darts: false },
     orderBy: desc(games.finishedAt),
     with: { players: { with: { player: true }, orderBy: asc(gamePlayers.position) } },
@@ -77,21 +73,55 @@ export async function playerStats(playerId: string, scope: StatsScope, range: St
     since ? gte(games.finishedAt, since) : undefined,
   );
 
-  const turnRows = await db
-    .select({
-      gameId: turns.gameId,
-      leg: turns.leg,
-      visit: turns.visit,
-      points: turns.points,
-      darts: turns.dartsThrown,
-      bust: turns.bust,
-      checkout: turns.checkout,
-      startScore: turns.startScore,
-      mode: games.mode,
-    })
-    .from(turns)
-    .innerJoin(games, eq(games.id, turns.gameId))
-    .where(and(eq(turns.playerId, playerId), inArray(games.mode, ["x01", "scoring"]), gameFilter));
+  const [turnRows, doubleRows, heat, matchRows] = await Promise.all([
+    db
+      .select({
+        gameId: turns.gameId,
+        leg: turns.leg,
+        visit: turns.visit,
+        points: turns.points,
+        darts: turns.dartsThrown,
+        bust: turns.bust,
+        checkout: turns.checkout,
+        startScore: turns.startScore,
+        mode: games.mode,
+      })
+      .from(turns)
+      .innerJoin(games, eq(games.id, turns.gameId))
+      .where(and(eq(turns.playerId, playerId), inArray(games.mode, ["x01", "scoring"]), gameFilter)),
+    db
+      .select({
+        target: darts.target,
+        attempts: sql<number>`count(*)::int`,
+        hits: sql<number>`count(*) filter (where ${darts.hit})::int`,
+        mode: games.mode,
+      })
+      .from(darts)
+      .innerJoin(games, eq(games.id, darts.gameId))
+      .where(and(eq(darts.playerId, playerId), eq(darts.atDouble, true), gameFilter))
+      .groupBy(darts.target, games.mode),
+    db
+      .select({ s: darts.segment, m: darts.multiplier, n: sql<number>`count(*)::int` })
+      .from(darts)
+      .innerJoin(games, eq(games.id, darts.gameId))
+      .where(and(eq(darts.playerId, playerId), inArray(games.mode, ["x01", "scoring"]), gameFilter))
+      .groupBy(darts.segment, darts.multiplier),
+    db
+      .select({
+        winner: gamePlayers.winner,
+        legsWon: gamePlayers.legsWon,
+        average: gamePlayers.average,
+        finishedAt: games.finishedAt,
+        kind: games.kind,
+        mode: games.mode,
+        gameId: games.id,
+        legsPlayed: sql<number>`(select count(distinct ${turns.leg})::int from ${turns} where ${turns.gameId} = ${games.id})`,
+      })
+      .from(gamePlayers)
+      .innerJoin(games, eq(games.id, gamePlayers.gameId))
+      .where(and(eq(gamePlayers.playerId, playerId), gameFilter))
+      .orderBy(asc(games.finishedAt)),
+  ]);
 
   // Free throw has no finishing, so it only feeds the scoring numbers.
   const statTurns: StatTurn[] = turnRows.map((t) => ({
@@ -104,18 +134,6 @@ export async function playerStats(playerId: string, scope: StatsScope, range: St
     legKey: `${t.gameId}:${t.leg}`,
   }));
 
-  const doubleRows = await db
-    .select({
-      target: darts.target,
-      attempts: sql<number>`count(*)::int`,
-      hits: sql<number>`count(*) filter (where ${darts.hit})::int`,
-      mode: games.mode,
-    })
-    .from(darts)
-    .innerJoin(games, eq(games.id, darts.gameId))
-    .where(and(eq(darts.playerId, playerId), eq(darts.atDouble, true), gameFilter))
-    .groupBy(darts.target, games.mode);
-
   const checkoutAttempts = doubleRows.filter((r) => r.mode === "x01").reduce((n, r) => n + r.attempts, 0);
   const scoring = scoringStats(statTurns, checkoutAttempts);
 
@@ -127,29 +145,6 @@ export async function playerStats(playerId: string, scope: StatsScope, range: St
     d.hits += r.hits;
     doubles.set(r.target, d);
   }
-
-  const heat = await db
-    .select({ s: darts.segment, m: darts.multiplier, n: sql<number>`count(*)::int` })
-    .from(darts)
-    .innerJoin(games, eq(games.id, darts.gameId))
-    .where(and(eq(darts.playerId, playerId), inArray(games.mode, ["x01", "scoring"]), gameFilter))
-    .groupBy(darts.segment, darts.multiplier);
-
-  const matchRows = await db
-    .select({
-      winner: gamePlayers.winner,
-      legsWon: gamePlayers.legsWon,
-      average: gamePlayers.average,
-      finishedAt: games.finishedAt,
-      kind: games.kind,
-      mode: games.mode,
-      gameId: games.id,
-      legsPlayed: sql<number>`(select count(distinct ${turns.leg})::int from ${turns} where ${turns.gameId} = ${games.id})`,
-    })
-    .from(gamePlayers)
-    .innerJoin(games, eq(games.id, gamePlayers.gameId))
-    .where(and(eq(gamePlayers.playerId, playerId), gameFilter))
-    .orderBy(asc(games.finishedAt));
 
   const matches = matchRows.filter((r) => r.kind === "match");
   const averages = matchRows

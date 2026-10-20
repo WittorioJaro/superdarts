@@ -13,6 +13,8 @@ const DEFAULTS: Opts = { startScore: 501, out: "double", legs: 3, sets: 3, useSe
 
 export function MatchSetup({ players: initial, meId }: { players: GamePlayer[]; meId: string }) {
   const router = useRouter();
+  // The counter has no server data, so it can be fully loaded before Start is tapped.
+  useEffect(() => router.prefetch("/play"), [router]);
   const [players, setPlayers] = useState(initial);
   const [picked, setPicked] = useState<string[]>([meId]);
   const [opts, setOpts] = useState<Opts>(DEFAULTS);
