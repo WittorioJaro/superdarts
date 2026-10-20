@@ -1,5 +1,5 @@
-import { type Dart, dartScore } from "../board";
-import type { OutMode } from "../checkout";
+import { type Dart, dartScore, isValidDart } from "../board";
+import { isCheckoutPossible, type OutMode } from "../checkout";
 import { type BaseState, type PlayerResult, closeTurn, currentTurn, newBaseState, openTurn, scored } from "../engine";
 
 export interface X01Config {
@@ -58,6 +58,7 @@ export function liveRemaining(state: X01State, player: number): number {
 
 export function x01Apply(state: X01State, dart: Dart, config: X01Config) {
   if (state.finished) return;
+  if (dart.v) return applyVisitTotal(state, dart, config);
   state.event = null;
   const p = state.current;
   const turn = openTurn(state, {
@@ -139,4 +140,37 @@ export function x01Results(state: X01State, config: X01Config): PlayerResult[] {
     setsWon: state.setsWon[p],
     winner: state.winner === p,
   }));
+}
+
+/** Questions needed before accepting a whole visit; totals only start at a visit boundary. */
+export function visitTotalNeeds(state: X01State, config: X01Config, total: number): { darts: boolean; atDouble: boolean } {
+  const remaining = liveRemaining(state, state.current);
+  return { darts: total === remaining && isCheckoutPossible(remaining, 3, config.out),
+    atDouble: config.out !== "single" && remaining <= 170 && isCheckoutPossible(remaining, 3, "double") };
+}
+
+function applyVisitTotal(state: X01State, dart: Dart, config: X01Config) {
+  if (state.open !== null || !isValidDart(dart)) return;
+  const v = dart.v!;
+  const p = state.current;
+  const before = state.remaining[p];
+  const after = before - v.total;
+  const finishes = after === 0 && isCheckoutPossible(before, v.darts, config.out);
+  const turn = openTurn(state, { set: state.set, leg: state.leg, startScore: before });
+  // Unknown landings and double targets stay unknown; records omit this entry from darts rows.
+  const attempts = config.out === "single" ? 0 : Math.max(v.atDouble, finishes && config.out === "double" ? 1 : 0);
+  turn.darts.push({ ...scored(dart), v: { ...v, atDouble: attempts }, score: v.total });
+  state.event = null;
+  if (after < 0 || (after === 1 && config.out !== "single") || (after === 0 && !finishes)) {
+    turn.bust = true;
+    state.event = { type: "bust", player: p };
+    closeTurn(state);
+    return;
+  }
+  turn.points = v.total;
+  state.remaining[p] = after;
+  turn.checkout = finishes;
+  closeTurn(state, !finishes);
+  if (finishes) winLeg(state, p, config);
+  else if (v.total === 180) state.event = { type: "max", player: p };
 }

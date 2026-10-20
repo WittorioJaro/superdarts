@@ -1,5 +1,5 @@
 import type { Dart } from "./board";
-import { threeDartAverage } from "./engine";
+import { threeDartAverage, turnDarts, turnAtDouble } from "./engine";
 import { type AnyConfig, MODES, type ModeId, replay, results } from "./modes";
 
 /**
@@ -13,7 +13,7 @@ export function buildRecords(mode: ModeId, config: AnyConfig, playerIds: string[
 
   const players = playerIds.map((playerId, p) => {
     const mine = state.turns.filter((t) => t.player === p);
-    const thrown = mine.reduce((n, t) => n + t.darts.length, 0);
+    const thrown = mine.reduce((n, t) => n + turnDarts(t), 0);
     return {
       playerId,
       position: p,
@@ -34,14 +34,15 @@ export function buildRecords(mode: ModeId, config: AnyConfig, playerIds: string[
     leg: t.leg,
     visit: t.visit,
     points: t.bust ? 0 : t.points,
-    dartsThrown: t.darts.length,
+    dartsThrown: turnDarts(t),
+    atDouble: turnAtDouble(t),
     startScore: t.startScore,
     bust: t.bust,
     checkout: t.checkout,
   }));
 
   const dartRows = state.turns.flatMap((t, seq) =>
-    t.darts.map((d, idx) => ({
+    t.darts.flatMap((d, idx) => d.v ? [] : [{
       playerId: playerIds[t.player],
       turnSeq: seq,
       idx,
@@ -51,7 +52,8 @@ export function buildRecords(mode: ModeId, config: AnyConfig, playerIds: string[
       target: d.target,
       hit: d.hit,
       atDouble: d.atDouble,
-    })),
+      thrownAt: d.t === undefined ? null : new Date(d.t),
+    }]),
   );
 
   const winner = state.winner !== null ? playerIds[state.winner] : null;

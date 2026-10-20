@@ -50,3 +50,35 @@ export function boardIconSvg(size: number, padding = 0.12) {
   }
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}"><rect width="${size}" height="${size}" fill="#0c1713"/><circle cx="${c}" cy="${c}" r="${R + size * 0.02}" fill="#1a2e26"/>${paths.join("")}<circle cx="${c}" cy="${c}" r="${r.outerBull}" fill="#22a45d"/><circle cx="${c}" cy="${c}" r="${r.bull}" fill="#e23b3b"/></svg>`;
 }
+
+/** Small repeatable pseudo-random number in [0, 1) from an integer, so a dart sits in the same spot on every render. */
+function jitter(seed: number) {
+  const x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+/**
+ * Where to draw a dart we only know as a segment and ring. It goes somewhere inside the right bed,
+ * nudged by `seed` so a group of darts in the same bed doesn't stack on one point.
+ */
+export function dartPoint(cx: number, cy: number, R: number, d: { s: number; m: number }, seed: number): readonly [number, number] {
+  const a = jitter(seed);
+  const b = jitter(seed + 101);
+  if (d.m === 0) return polar(cx, cy, R * (1.06 + a * 0.08), b * 360);
+  if (d.s === 25) {
+    const r = d.m === 2 ? R * RINGS.bull * a * 0.9 : R * (RINGS.bull + (RINGS.outerBull - RINGS.bull) * (0.2 + a * 0.6));
+    return polar(cx, cy, r, b * 360);
+  }
+  const i = BOARD_ORDER.indexOf(d.s);
+  const angle = i * 18 + (b - 0.5) * 14;
+  const band =
+    d.m === 3
+      ? [RINGS.trebleIn, RINGS.trebleOut]
+      : d.m === 2
+        ? [RINGS.doubleIn, RINGS.doubleOut]
+        : a < 0.45
+          ? [RINGS.outerBull + 0.04, RINGS.trebleIn - 0.03]
+          : [RINGS.trebleOut + 0.03, RINGS.doubleIn - 0.03];
+  const t = d.m === 1 ? jitter(seed + 7) : 0.5;
+  return polar(cx, cy, R * (band[0] + (band[1] - band[0]) * (0.2 + t * 0.6)), angle);
+}

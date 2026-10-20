@@ -26,6 +26,7 @@ export interface ScoringStats {
   highestCheckout: number;
   /** Fewest darts to win a 501 leg. */
   bestLeg: number | null;
+  dartsPerLeg: number | null;
 }
 
 export function scoringStats(turns: StatTurn[], checkoutAttempts: number): ScoringStats {
@@ -48,6 +49,7 @@ export function scoringStats(turns: StatTurn[], checkoutAttempts: number): Scori
     checkoutPct: 0,
     highestCheckout: 0,
     bestLeg: null,
+    dartsPerLeg: null,
   };
   const legDarts = new Map<string, { darts: number; start: number | null; won: boolean }>();
 
@@ -79,6 +81,8 @@ export function scoringStats(turns: StatTurn[], checkoutAttempts: number): Scori
     if (leg.won && leg.start === 501 && (s.bestLeg === null || leg.darts < s.bestLeg)) s.bestLeg = leg.darts;
   }
 
+  const won501 = [...legDarts.values()].filter((leg) => leg.won && leg.start === 501);
+  s.dartsPerLeg = won501.length ? won501.reduce((n, leg) => n + leg.darts, 0) / won501.length : null;
   s.darts = darts;
   s.average = darts ? (points / darts) * 3 : 0;
   s.first9 = f9Darts ? (f9Points / f9Darts) * 3 : 0;
@@ -92,4 +96,10 @@ export function fmtAvg(n: number | null | undefined) {
 
 export function fmtPct(n: number | null | undefined) {
   return n === null || n === undefined || Number.isNaN(n) ? "–" : `${n.toFixed(n >= 10 ? 0 : 1)}%`;
+}
+
+/** MPR counts all useful cricket marks, including scoring marks on open numbers. */
+export function cricketMpr(turns: { darts: { s: number; m: number; marks?: number }[] }[]): number | null {
+  const darts = turns.flatMap((t) => t.darts);
+  return darts.length ? 3 * darts.reduce((n, d) => n + (d.marks ?? ([20, 19, 18, 17, 16, 15, 25].includes(d.s) ? d.m : 0)), 0) / darts.length : null;
 }

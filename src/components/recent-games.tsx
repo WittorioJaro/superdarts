@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { gameDetail, gameTitle } from "@/lib/darts/labels";
 import { fmtAvg } from "@/lib/darts/stats";
 import type { GameRow } from "@/lib/queries";
@@ -20,7 +21,8 @@ export function RecentGames({ games, me }: { games: GameRow[]; me: string }) {
         const others = g.players.filter((p) => p.id !== me);
         const won = !!mine?.winner;
         return (
-          <li key={g.id} className="flex items-center gap-4 px-5 py-3.5">
+          <li key={g.id}>
+            <Link href={`/games/${g.id}`} className="flex items-center gap-4 px-5 py-3.5 transition hover:bg-felt">
             <span
               className={`w-20 shrink-0 font-display text-lg font-bold ${
                 g.kind === "match" ? (won ? "text-treble" : "text-double") : "text-dim"
@@ -48,6 +50,7 @@ export function RecentGames({ games, me }: { games: GameRow[]; me: string }) {
               </span>
             )}
             <span className="w-14 shrink-0 text-right text-sm text-dim">{dateFmt.format(g.finishedAt)}</span>
+            </Link>
           </li>
         );
       })}
@@ -71,5 +74,11 @@ function practiceOutcome(g: GameRow, score: number): string {
       return n(score, "double hit", "doubles hit");
     case "checkout":
       return `${score} of ${(g.config.targets as unknown[]).length} out`;
+    case "cricket":
+      return g.status === "finished" ? n(score, "dart", "darts") : "not finished";
+    case "onetwentyone":
+      return score ? `up to ${score}` : "no finishes";
+    case "target":
+      return n(score, "hit", "hits");
   }
 }

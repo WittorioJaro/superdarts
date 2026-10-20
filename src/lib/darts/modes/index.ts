@@ -1,11 +1,17 @@
 import type { Dart } from "../board";
 import type { BaseState, PlayerResult } from "../engine";
+import * as C from "./cricket";
+import * as O from "./onetwentyone";
+import * as T from "./target";
 import * as P from "./practice";
 import { type X01Config, type X01State, x01Apply, x01Init, x01Results } from "./x01";
 
-export type ModeId = "x01" | "scoring" | "around" | "bobs27" | "doubles" | "checkout" | "shanghai";
+export type ModeId = "x01" | "scoring" | "around" | "bobs27" | "doubles" | "checkout" | "shanghai" | "cricket" | "onetwentyone" | "target";
 
 export interface ConfigMap {
+  cricket: C.CricketConfig;
+  onetwentyone: O.OneTwentyOneConfig;
+  target: T.TargetConfig;
   x01: X01Config;
   scoring: P.ScoringConfig;
   around: P.AroundConfig;
@@ -16,6 +22,9 @@ export interface ConfigMap {
 }
 
 export interface StateMap {
+  cricket: C.CricketState;
+  onetwentyone: O.OneTwentyOneState;
+  target: T.TargetState;
   x01: X01State;
   scoring: P.ScoringState;
   around: P.AroundState;
@@ -31,7 +40,10 @@ interface Engine<M extends ModeId> {
   results(state: StateMap[M], config: ConfigMap[M]): PlayerResult[];
 }
 
-const ENGINES: { [M in ModeId]: Engine<M> } = {
+export const ENGINES: { [M in ModeId]: Engine<M> } = {
+  cricket: { init: C.cricketInit, apply: C.cricketApply, results: C.cricketResults },
+  onetwentyone: { init: O.onetwentyoneInit, apply: O.onetwentyoneApply, results: O.onetwentyoneResults },
+  target: { init: T.targetInit, apply: T.targetApply, results: T.targetResults },
   x01: { init: x01Init, apply: x01Apply, results: x01Results },
   scoring: { init: P.scoringInit, apply: P.scoringApply, results: P.scoringResults },
   around: { init: P.aroundInit, apply: P.aroundApply, results: P.aroundResults },
@@ -47,6 +59,7 @@ export function replay<M extends ModeId>(mode: M, config: ConfigMap[M], players:
   const state = engine.init(config, players);
   for (const d of darts) {
     if ((state as BaseState).finished) break;
+    if (d.v && mode !== "x01") continue;
     engine.apply(state, d, config);
   }
   return state;
@@ -67,6 +80,9 @@ export interface ModeInfo {
 }
 
 export const MODES: Record<ModeId, ModeInfo> = {
+  cricket: { name: "Cricket", blurb: "Close 20 to 15 and bull.", scoreLabel: "Legs won", better: "higher", scoring: false },
+  onetwentyone: { name: "121 challenge", blurb: "Finish, then raise the target.", scoreLabel: "Highest finish", better: "higher", scoring: false },
+  target: { name: "Target practice", blurb: "Work on a chosen ring and number.", scoreLabel: "Hits", better: "higher", scoring: false },
   x01: {
     name: "X01",
     blurb: "Count down to zero.",

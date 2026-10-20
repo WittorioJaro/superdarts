@@ -1,10 +1,11 @@
 "use client";
 
 import { Avatar } from "@/components/ui";
-import { doubleLabel } from "@/lib/darts/board";
-import type { BaseState } from "@/lib/darts/engine";
+import { dartLabel, doubleLabel } from "@/lib/darts/board";
+import { type BaseState, turnDarts } from "@/lib/darts/engine";
 import { gameDetail, gameTitle } from "@/lib/darts/labels";
 import { type AnyState, MODES, type StateMap, results } from "@/lib/darts/modes";
+import { cricketMpr } from "@/lib/darts/modes/cricket";
 import { BOBS_TARGETS } from "@/lib/darts/modes/practice";
 import { type ScoringStats, fmtAvg, fmtPct, scoringStats } from "@/lib/darts/stats";
 import type { ActiveGame } from "@/lib/game-store";
@@ -14,14 +15,14 @@ export function playerStats(state: BaseState, player: number): ScoringStats {
   return scoringStats(
     mine.map((t) => ({
       points: t.points,
-      darts: t.darts.length,
+      darts: turnDarts(t),
       bust: t.bust,
       checkout: t.checkout,
       startScore: t.startScore,
       visit: t.visit,
       legKey: String(t.leg),
     })),
-    mine.reduce((n, t) => n + t.darts.filter((d) => d.atDouble).length, 0),
+    mine.reduce((n, t) => n + t.darts.reduce((k, d) => k + (d.v ? d.v.atDouble : d.atDouble ? 1 : 0), 0), 0),
   );
 }
 
@@ -32,6 +33,7 @@ export function Summary({
   onAgain,
   onDone,
   onUndo,
+  plan,
 }: {
   game: ActiveGame;
   state: AnyState;
@@ -39,6 +41,8 @@ export function Summary({
   onAgain: () => void;
   onDone: () => void;
   onUndo: () => void;
+  /** Set when this game is one step of a training plan. */
+  plan: { index: number; steps: string[]; onNext: () => void } | null;
 }) {
   const config = game.config as unknown as Record<string, unknown>;
   const res = results(game.mode, state as never, game.config as never);
@@ -51,6 +55,8 @@ export function Summary({
   if (isMatch && winner) {
     headline = `${winner.name.split(" ")[0]} wins`;
     sub = game.players.map((_, i) => (Number(config.sets) > 1 ? res[i].setsWon : res[i].legsWon)).join("–");
+    const points = (state as StateMap["cricket"]).points;
+    if (game.mode === "cricket" && Number(config.legs) === 1 && points?.some((p) => p > 0)) sub = `${sub}, ${points.join("–")} on points`;
   } else {
     headline = practiceHeadline(game, state);
     sub = `${gameTitle(game.mode, config)}, ${gameDetail(game.mode, config).toLowerCase()}`;
@@ -115,7 +121,21 @@ export function Summary({
         </div>
       )}
 
-      {!showScoring && <PracticeDetail game={game} state={state} />}
+      {game.mode === "cricket" && <CricketDetail game={game} state={state as StateMap["cricket"]} />}
+      {!showScoring && !(game.mode === "cricket" && isMatch) && <PracticeDetail game={game} state={state} />}
+
+      {plan && (
+        <ol className="flex flex-wrap gap-2" aria-label="Training plan">
+          {plan.steps.map((title, i) => (
+            <li
+              key={i}
+              className={`rounded-xl px-3 py-1.5 font-medium ${i < plan.index ? "bg-treble/25 text-chalk" : i === plan.index ? "bg-brass text-ink" : "bg-cabinet text-dim"}`}
+            >
+              {i + 1}. {title}
+            </li>
+          ))}
+        </ol>
+      )}
 
       <div className="safe-bottom sticky bottom-0 mt-auto grid gap-3 bg-ink pt-3 sm:grid-cols-[auto_1fr_1fr]">
         {!stopped && (
@@ -123,9 +143,15 @@ export function Summary({
             Undo last dart
           </button>
         )}
-        <button type="button" onClick={onAgain} className="h-16 rounded-2xl bg-felt font-display text-2xl font-bold hover:bg-wire">
-          {isMatch ? "Rematch" : "Go again"}
-        </button>
+        {plan && plan.index < plan.steps.length - 1 ? (
+          <button type="button" onClick={plan.onNext} className="h-16 rounded-2xl bg-treble font-display text-2xl font-bold text-ink">
+            Next: {plan.steps[plan.index + 1]}
+          </button>
+        ) : (
+          <button type="button" onClick={onAgain} className="h-16 rounded-2xl bg-felt font-display text-2xl font-bold hover:bg-wire">
+            {isMatch ? "Rematch" : "Go again"}
+          </button>
+        )}
         <button type="button" onClick={onDone} className="h-16 rounded-2xl bg-chalk font-display text-2xl font-bold text-ink">
           Save and finish
         </button>
@@ -136,7 +162,7 @@ export function Summary({
 
 function practiceHeadline(game: ActiveGame, state: AnyState): string {
   const s = state as StateMap[typeof game.mode];
-  const darts = state.turns.reduce((n, t) => n + t.darts.length, 0);
+  const darts = state.turns.reduce((n, t) => n + turnDarts(t), 0);
   switch (game.mode) {
     case "scoring":
       return `${fmtAvg(playerStats(state, 0).average)} average`;
@@ -158,7 +184,41 @@ function practiceHeadline(game: ActiveGame, state: AnyState): string {
     }
     case "shanghai":
       return `${(s as StateMap["shanghai"]).score} points`;
+    case "cricket":
+      return state.finished ? `${darts} darts` : `${(s as StateMap["cricket"]).marks[0].filter((m) => m >= 3).length} of 7 closed`;
+    case "onetwentyone": {
+      const o = s as StateMap["onetwentyone"];
+      const best = Math.max(0, ...o.results.filter((r) => r.success).map((r) => r.target));
+      return best ? `Up to ${best}` : "No finishes";
+    }
+    case "target": {
+      const t = s as StateMap["target"];
+      return `${t.hits.reduce((n, h) => n + h, 0)} of ${darts} hit`;
+    }
+    default:
+      return "";
   }
+}
+
+function CricketDetail({ game, state }: { game: ActiveGame; state: StateMap["cricket"] }) {
+  return (
+    <dl className="grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.min(game.players.length, 4)}, minmax(0, 1fr))` }}>
+      {game.players.map((p, i) => {
+        const mine = state.turns.filter((t) => t.player === i);
+        return (
+          <div key={p.id} className="flex flex-col gap-1 rounded-2xl bg-cabinet p-5">
+            <dt className="flex items-center gap-2 font-semibold">
+              <Avatar name={p.name} color={p.color} url={p.avatarUrl} size={26} /> {p.name.split(" ")[0]}
+            </dt>
+            <dd className="font-display text-4xl font-bold">
+              {(cricketMpr(mine) ?? 0).toFixed(2)} <span className="text-lg font-medium text-dim">marks per round</span>
+            </dd>
+            <dd className="text-dim">{mine.reduce((n, t) => n + t.darts.length, 0)} darts</dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
 }
 
 function PracticeDetail({ game, state }: { game: ActiveGame; state: AnyState }) {
@@ -175,6 +235,12 @@ function PracticeDetail({ game, state }: { game: ActiveGame; state: AnyState }) 
     items.push(["Hit rate", fmtPct((hits / aimed.length) * 100)]);
   }
   if (game.mode === "shanghai") items.push(["Shanghais", String((state as StateMap["shanghai"]).shanghais)]);
+  if (game.mode === "target") {
+    const misses = new Map<string, number>();
+    for (const d of darts) if (!d.hit) misses.set(dartLabel(d), (misses.get(dartLabel(d)) ?? 0) + 1);
+    const top = [...misses.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (top) items.push(["Most misses", `${top[0]} ×${top[1]}`]);
+  }
 
   return (
     <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">

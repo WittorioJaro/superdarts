@@ -17,7 +17,7 @@ export function scoringInit(_: ScoringConfig, players: number): ScoringState {
 }
 
 export function scoringApply(state: ScoringState, dart: Dart, config: ScoringConfig) {
-  if (state.finished) return;
+  if (state.finished || dart.v) return;
   state.event = null;
   const turn = openTurn(state, { visit: state.turns.length });
   turn.darts.push(scored(dart));
@@ -56,7 +56,7 @@ function aroundHit(d: Dart, target: number, ring: AroundConfig["ring"]) {
 }
 
 export function aroundApply(state: AroundState, dart: Dart, config: AroundConfig) {
-  if (state.finished) return;
+  if (state.finished || dart.v) return;
   state.event = null;
   const turn = openTurn(state, { visit: state.turns.length });
   const target = state.targets[state.index];
@@ -99,7 +99,7 @@ export function bobsInit(_: BobsConfig, players: number): BobsState {
 }
 
 export function bobsApply(state: BobsState, dart: Dart) {
-  if (state.finished) return;
+  if (state.finished || dart.v) return;
   state.event = null;
   const target = BOBS_TARGETS[state.round];
   const turn = openTurn(state, { visit: state.round, startScore: state.score });
@@ -157,7 +157,7 @@ export function doublesInit(_: DoublesConfig, players: number): DoublesState {
 }
 
 export function doublesApply(state: DoublesState, dart: Dart, config: DoublesConfig) {
-  if (state.finished) return;
+  if (state.finished || dart.v) return;
   state.event = null;
   const target = config.targets[state.index];
   const turn = openTurn(state, { visit: state.index });
@@ -207,7 +207,7 @@ export function checkoutInit(config: CheckoutConfig, players: number): CheckoutS
 }
 
 export function checkoutApply(state: CheckoutState, dart: Dart, config: CheckoutConfig) {
-  if (state.finished) return;
+  if (state.finished || dart.v) return;
   state.event = null;
   const turn = openTurn(state, { leg: state.attempt, startScore: state.remaining });
   const before = state.remaining;
@@ -267,7 +267,7 @@ export function shanghaiInit(_: ShanghaiConfig, players: number): ShanghaiState 
 }
 
 export function shanghaiApply(state: ShanghaiState, dart: Dart, config: ShanghaiConfig) {
-  if (state.finished) return;
+  if (state.finished || dart.v) return;
   state.event = null;
   const target = state.round + 1;
   const turn = openTurn(state, { visit: state.round });

@@ -1,0 +1,91 @@
+# Feature tracker
+
+What Superdarts does today and what's still to build. Update this file in the same commit as the work.
+
+✅ done · 🚧 in progress · ⬜ not started · 💤 later
+
+## Core
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Google sign-in, invite list (`ALLOWED_EMAILS`) | ✅ | |
+| iPad PWA, home screen launcher, stays signed in | ✅ | |
+| Dart-by-dart entry: 1–20, Double, Treble, 25, Bull, Miss, Undo | ✅ | |
+| Offline play, save queue, idempotent saves | ✅ | |
+| Every dart stored (segment, ring, target, hit) | ✅ | |
+| Time stamp on every dart | ✅ | Needed for fatigue and pace stats. Old games can't get one |
+| Visit-total entry (type 60 instead of three darts) | ✅ | X01 only. Asks darts used and darts at a double when it matters |
+
+## Matches
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| X01 301/501/701, double/single/master out, legs and sets | ✅ | |
+| Cricket | ✅ | Standard and cut-throat |
+| Ranked or casual match switch | ✅ | Only ranked 501 matches change ratings |
+| Play a bot with a set average | ✅ | |
+| Play your past self (ghost built from your history) | ✅ | |
+| Match replay, visit by visit | ✅ | |
+| Darts shown on a virtual board in the replay | ✅ | |
+
+## Practice
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Free throw (scoring practice, set number of visits) | ✅ | Covers "30 darts, maximise score" |
+| Solo X01 | ✅ | |
+| Around the clock (any, doubles, trebles) | ✅ | |
+| Doubles training | ✅ | |
+| Checkout challenge (random finishes in a range) | ✅ | |
+| Bob's 27 | ✅ | |
+| Shanghai | ✅ | |
+| Cricket practice (close everything in the fewest darts) | ✅ | |
+| 121 challenge | ✅ | |
+| Target practice / T20 challenge (100 darts at one target) | ✅ | |
+| Weakness trainer (your weakest targets, picked from stats) | ✅ | |
+| Today's training (a 20-minute plan built from your stats) | ✅ | Simple rules, no AI |
+
+## Stats
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| 3-dart and first-9 average | ✅ | |
+| Checkout rate, hit rate per double | ✅ | |
+| 180s, 140+, 100+, 60+, highest visit, highest checkout, best leg | ✅ | |
+| Match wins, legs, recent form | ✅ | |
+| Average per game chart | ✅ | |
+| Board heatmap of all scoring darts | ✅ | |
+| Personal best and trend per drill | ✅ | |
+| Filters: matches or practice, all time or last 30 days | ✅ | |
+| Average darts per leg | ✅ | |
+| Rolling average over the last 20 games | ✅ | |
+| Where you miss a chosen target (left, right, high, low) | ✅ | From target practice |
+| Does practice improve match results | ✅ | Practice volume against match average, by week |
+| Does scoring drop as a session goes on | ✅ | Needs dart time stamps |
+| Achievements and records (first 180, ton-plus checkout, streaks…) | ✅ | Computed from real games |
+
+## Friends and competition
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Profiles for every friend, guest players | ✅ | |
+| Leaderboard (average, checkout, best checkout, 180s, rating) | ✅ | Players list today shows average and wins only |
+| Head-to-head (record, streak, side-by-side stats) | ✅ | |
+| Glicko-2 rating for 501 | ✅ | |
+| Rating history | ✅ | |
+| Groups ("The Darts Club") | 💤 | One implicit group today. Comes with invite links for online rooms |
+
+## Online and cameras (after everything above)
+
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Private online room with invite link | 💤 | Supabase Realtime for game state |
+| Live opponent scoreboard | 💤 | |
+| Works fully without cameras | 💤 | Manual scores always available |
+| Board camera and face camera, voice | 💤 | WebRTC, probably LiveKit |
+| Phone as camera: scan a QR code on the iPad, no second login | 💤 | |
+| Camera calibration (board centre, rings, perspective) | 💤 | Homography to board coordinates |
+| Dart detection by frame difference, tip position to score | 💤 | OpenCV first, small model if needed |
+| Confidence-based scoring: automatic, assisted (tap to confirm), manual | 💤 | Quick correction buttons for near segments |
+| Multiple cameras for occlusion | 💤 | |
+| Paid upgrades (hosted multiplayer, advanced camera scoring) | 💤 | Only if it ever goes beyond friends |

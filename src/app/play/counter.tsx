@@ -2,24 +2,31 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
-import { Pad } from "@/components/pad";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { Pad, TotalPad } from "@/components/pad";
 import { Sheet } from "@/components/ui";
-import type { Dart } from "@/lib/darts/board";
+import { type BotModel, botDart } from "@/lib/darts/bot";
+import { isCheckoutPossible } from "@/lib/darts/checkout";
+import { type Dart, visitTotal } from "@/lib/darts/board";
 import type { GameEvent } from "@/lib/darts/engine";
 import { gameDetail, gameTitle } from "@/lib/darts/labels";
 import { type AnyState, type ConfigMap, type StateMap, replay } from "@/lib/darts/modes";
-import { type X01Config, doubleTarget, liveRemaining } from "@/lib/darts/modes/x01";
+import { CRICKET_NUMBERS } from "@/lib/darts/modes/cricket";
+import { type X01Config, doubleTarget, liveRemaining, visitTotalNeeds } from "@/lib/darts/modes/x01";
 import { BOBS_TARGETS, checkoutTargets, doublesTargets } from "@/lib/darts/modes/practice";
-import { type ActiveGame, gameStore, startGame, toPendingSave, useActiveGame } from "@/lib/game-store";
+import { type ActiveGame, type GamePlayer, gameStore, startGame, toPendingSave, useActiveGame } from "@/lib/game-store";
+import { planStore, startPlanStep, usePlan } from "@/lib/plan-store";
 import { syncPending } from "@/lib/sync";
 import {
   AroundBoard,
   BobsBoard,
   CheckoutBoard,
+  CricketBoard,
   DoublesBoard,
+  OneTwentyOneBoard,
   ScoringBoard,
   ShanghaiBoard,
+  TargetBoard,
   X01Board,
 } from "./boards";
 import { Summary } from "./summary";
@@ -51,16 +58,28 @@ function rebuild(game: ActiveGame): AnyState {
   return replay(game.mode, game.config as never, game.players.length, game.darts);
 }
 
+/** Bot opponents travel with the game on the device, model and all. */
+type Player = GamePlayer & { bot?: BotModel };
+
+function botAt(game: ActiveGame, i: number) {
+  return (game.players[i] as Player | undefined)?.bot ?? null;
+}
+
+const BOT_PACE = 650;
+
 function Play({ game }: { game: ActiveGame }) {
   const router = useRouter();
   const state = useMemo(() => rebuild(game), [game]);
   const [flash, setFlash] = useState<{ key: number; event: GameEvent } | null>(null);
   const [menu, setMenu] = useState(false);
+  const [entry, setEntry] = useState<"darts" | "total">(() => (game.mode === "x01" ? gameStore.prefs("entry", "darts") : "darts"));
+  const plan = usePlan();
+  const inPlan = plan?.gameId === game.id ? plan : null;
 
   const throwDart = useCallback(
     (d: Dart) => {
       if (state.finished || game.ended) return;
-      const next = { ...game, darts: [...game.darts, d] };
+      const next = { ...game, darts: [...game.darts, { ...d, t: Date.now() }] };
       gameStore.setActive(next);
       const ev = rebuild(next).event;
       if (ev && ev.type !== "hit" && ev.type !== "match") setFlash({ key: next.darts.length, event: ev });
@@ -68,11 +87,31 @@ function Play({ game }: { game: ActiveGame }) {
     [game, state.finished],
   );
 
+  // Undo goes back to the last dart a person threw, taking any bot visit with it.
   const undo = useCallback(() => {
     if (game.darts.length === 0) return;
     setFlash(null);
-    gameStore.setActive({ ...game, ended: false, darts: game.darts.slice(0, -1) });
+    let darts = game.darts.slice(0, -1);
+    while (darts.length > 0) {
+      const s = rebuild({ ...game, darts });
+      if (s.finished || !botAt(game, s.current)) break;
+      darts = darts.slice(0, -1);
+    }
+    gameStore.setActive({ ...game, ended: false, darts });
   }, [game]);
+
+  // A bot throws its darts one at a time, at a pace you can follow.
+  const bot = !state.finished && !game.ended && game.mode === "x01" ? botAt(game, state.current) : null;
+  useEffect(() => {
+    if (!bot) return;
+    const s = state as StateMap["x01"];
+    const open = s.open === null ? 0 : s.turns[s.open].darts.length;
+    const id = setTimeout(() => {
+      const ctx = { remaining: liveRemaining(s, s.current), dartsLeft: (3 - open) as 1 | 2 | 3, out: (game.config as X01Config).out };
+      throwDart(botDart(bot, ctx, Math.random));
+    }, BOT_PACE);
+    return () => clearTimeout(id);
+  }, [bot, state, game.config, throwDart]);
 
   function save() {
     gameStore.addPending(toPendingSave(game));
@@ -82,11 +121,18 @@ function Play({ game }: { game: ActiveGame }) {
   function finish() {
     if (game.darts.length > 0) save();
     gameStore.setActive(null);
+    if (inPlan) planStore.clear();
     router.push("/");
   }
 
+  function nextStep() {
+    if (!inPlan) return;
+    if (game.darts.length > 0) save();
+    startPlanStep(inPlan.steps, inPlan.index + 1, inPlan.player);
+  }
   function again() {
     if (game.darts.length > 0) save();
+    planStore.clear();
     const players = game.kind === "match" ? [...game.players.slice(1), game.players[0]] : game.players;
     startGame({ kind: game.kind, mode: game.mode, config: freshConfig(game) as never, players });
   }
@@ -95,13 +141,29 @@ function Play({ game }: { game: ActiveGame }) {
   if (over) {
     return (
       <main className="safe-top safe-bottom flex flex-1 flex-col">
-        <Summary game={game} state={state} stopped={!!game.ended && !state.finished} onAgain={again} onDone={finish} onUndo={undo} />
+        <Summary
+          game={game}
+          state={state}
+          stopped={!!game.ended && !state.finished}
+          onAgain={again}
+          onDone={finish}
+          onUndo={undo}
+          plan={inPlan ? { index: inPlan.index, steps: inPlan.steps.map((s) => s.title), onNext: nextStep } : null}
+        />
       </main>
     );
   }
 
   const config = game.config as unknown as Record<string, unknown>;
   const { targets, quick } = aimFor(game, state);
+  // Totals are entered a whole visit at a time, so the switch only works between visits.
+  const visitOpen = state.open !== null && state.turns[state.open].darts.length > 0;
+  const useTotals = game.mode === "x01" && entry === "total" && !visitOpen;
+
+  function switchEntry(next: "darts" | "total") {
+    setEntry(next);
+    gameStore.setPref("entry", next);
+  }
 
   return (
     <main className="safe-top safe-bottom fixed inset-0 flex flex-col gap-3 px-3 sm:px-4">
@@ -118,9 +180,26 @@ function Play({ game }: { game: ActiveGame }) {
         </button>
         <p className="truncate text-center">
           <span className="font-display text-2xl font-bold">{gameTitle(game.mode, config)}</span>
-          <span className="ml-3 text-dim">{headerDetail(game, state)}</span>
+          <span className="ml-3 text-dim">{inPlan ? `Training ${inPlan.index + 1} of ${inPlan.steps.length}` : headerDetail(game, state)}</span>
         </p>
-        <span className="w-24" />
+        {game.mode === "x01" ? (
+          <div className="flex rounded-xl bg-cabinet p-1" role="group" aria-label="Enter scores as">
+            {(["darts", "total"] as const).map((e) => (
+              <button
+                key={e}
+                type="button"
+                aria-pressed={entry === e}
+                disabled={visitOpen && e === "total"}
+                onClick={() => switchEntry(e)}
+                className={`h-10 rounded-lg px-3 font-medium transition disabled:opacity-40 ${entry === e ? "bg-chalk text-ink" : "text-dim hover:text-chalk"}`}
+              >
+                {e === "darts" ? "Darts" : "Total"}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <span className="w-24" />
+        )}
       </header>
 
       <div className="grid min-h-0 flex-1 gap-3 portrait:grid-rows-[minmax(0,1fr)_minmax(0,1.15fr)] landscape:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -128,7 +207,30 @@ function Play({ game }: { game: ActiveGame }) {
           <Board game={game} state={state} />
         </div>
         <div className="min-h-0">
-          <Pad onDart={throwDart} onUndo={undo} canUndo={game.darts.length > 0} targets={targets} quick={quick} />
+          {bot ? (
+            <div className="flex h-full flex-col items-center justify-center gap-4 rounded-3xl bg-cabinet p-6 text-center">
+              <span className="font-display text-4xl font-bold">{game.players[state.current].name} is throwing…</span>
+              <button type="button" onClick={undo} className="h-14 rounded-2xl bg-felt px-6 text-lg font-semibold text-dim hover:text-chalk">
+                Undo your last dart
+              </button>
+            </div>
+          ) : useTotals ? (
+            <TotalPad
+              onTotal={(total, opts) => {
+                try {
+                  throwDart(visitTotal(total, opts));
+                } catch {
+                  // The pad only offers possible combinations; anything else is ignored rather than crashing the game.
+                }
+              }}
+              canFinish={(total, n) => isCheckoutPossible(total, n, (game.config as X01Config).out)}
+              needs={(total) => visitTotalNeeds(state as StateMap["x01"], game.config as X01Config, total)}
+              onUndo={undo}
+              canUndo={game.darts.length > 0}
+            />
+          ) : (
+            <Pad onDart={throwDart} onUndo={undo} canUndo={game.darts.length > 0} targets={targets} quick={quick} />
+          )}
         </div>
       </div>
 
@@ -169,6 +271,12 @@ function Board({ game, state }: { game: ActiveGame; state: AnyState }) {
       return <CheckoutBoard state={state as StateMap["checkout"]} config={game.config as ConfigMap["checkout"]} />;
     case "shanghai":
       return <ShanghaiBoard state={state as StateMap["shanghai"]} config={game.config as ConfigMap["shanghai"]} />;
+    case "cricket":
+      return <CricketBoard state={state as StateMap["cricket"]} config={game.config as ConfigMap["cricket"]} players={game.players} />;
+    case "onetwentyone":
+      return <OneTwentyOneBoard state={state as StateMap["onetwentyone"]} config={game.config as ConfigMap["onetwentyone"]} />;
+    case "target":
+      return <TargetBoard state={state as StateMap["target"]} config={game.config as ConfigMap["target"]} />;
   }
 }
 
@@ -204,6 +312,18 @@ function aimFor(game: ActiveGame, state: AnyState): { targets: number[]; quick: 
       const t = (state as StateMap["shanghai"]).round + 1;
       return { targets: [t], quick: null };
     }
+    case "cricket": {
+      const s = state as StateMap["cricket"];
+      return { targets: CRICKET_NUMBERS.filter((_, i) => s.marks[s.current][i] < 3), quick: null };
+    }
+    case "onetwentyone": {
+      const t = doubleTarget((state as StateMap["onetwentyone"]).remaining);
+      return { targets: t ? [t] : [], quick: null };
+    }
+    case "target": {
+      const t = (game.config as ConfigMap["target"]).targets[(state as StateMap["target"]).index];
+      return { targets: t ? [t.s] : [], quick: t ?? null };
+    }
     default:
       return { targets: [], quick: null };
   }
@@ -215,6 +335,9 @@ function headerDetail(game: ActiveGame, state: AnyState) {
     const s = state as StateMap["x01"];
     const sets = Number(config.sets) > 1 ? `Set ${s.set + 1}, ` : "";
     return `${sets}Leg ${s.legInSet + 1}. ${gameDetail(game.mode, config)}`;
+  }
+  if (game.mode === "cricket" && game.players.length > 1 && Number(config.legs) > 1) {
+    return `Leg ${(state as StateMap["cricket"]).leg + 1}. ${gameDetail(game.mode, config)}`;
   }
   return gameDetail(game.mode, config);
 }
@@ -235,7 +358,7 @@ function freshConfig(game: ActiveGame) {
 function Flash({ event, game }: { event: GameEvent; game: ActiveGame }) {
   const name = game.players[event.player]?.name.split(" ")[0] ?? "";
   const content: Record<GameEvent["type"], { text: string; tone: string } | null> = {
-    max: { text: game.mode === "shanghai" ? "Shanghai!" : "180", tone: "text-brass" },
+    max: { text: game.mode === "shanghai" ? "Shanghai!" : game.mode === "cricket" ? "9 marks" : "180", tone: "text-brass" },
     bust: { text: "Bust", tone: "text-double" },
     leg: { text: game.players.length > 1 ? `Leg to ${name}` : "Leg won", tone: "text-chalk" },
     set: { text: `Set to ${name}`, tone: "text-brass" },

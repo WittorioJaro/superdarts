@@ -1,3 +1,4 @@
+import { dartLabel } from "./board";
 import { MODES, type ModeId } from "./modes";
 
 const OUT_LABEL = { double: "Double out", single: "Straight out", master: "Master out" } as const;
@@ -5,6 +6,10 @@ const OUT_LABEL = { double: "Double out", single: "Straight out", master: "Maste
 /** Short title for a game, e.g. "501" or "Around the clock". */
 export function gameTitle(mode: ModeId, config: Record<string, unknown>): string {
   if (mode === "x01") return String(config.startScore);
+  if (mode === "target") {
+    const targets = config.targets as { s: number; m: 1 | 2 | 3 }[];
+    return targets.length === 1 ? `${dartLabel(targets[0])} practice` : "Weakness trainer";
+  }
   return MODES[mode].name;
 }
 
@@ -20,6 +25,12 @@ export function gameDetail(mode: ModeId, config: Record<string, unknown>): strin
           ? `First to ${sets} sets of ${legs} ${legs === 1 ? "leg" : "legs"}`
           : `First to ${legs} ${legs === 1 ? "leg" : "legs"}`;
       return `${format}, ${out.toLowerCase()}`;
+    }
+    case "cricket": return `${config.variant === "cutthroat" ? "Cut-throat" : "Standard"}, first to ${config.legs}`;
+    case "onetwentyone": return `From ${config.start}, ${config.attempts} targets, ${config.darts} darts each`;
+    case "target": {
+      const targets = config.targets as { s: number; m: 1 | 2 | 3 }[];
+      return targets.length === 1 ? `${config.dartsPerTarget} darts` : `${targets.map(dartLabel).join(", ")}, ${config.dartsPerTarget} darts each`;
     }
     case "scoring":
       return Number(config.rounds) > 0 ? `${config.rounds} visits` : "No visit limit";

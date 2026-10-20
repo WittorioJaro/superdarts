@@ -5,6 +5,7 @@ import { type Dart, dartLabel, doubleLabel } from "@/lib/darts/board";
 import { suggestCheckout } from "@/lib/darts/checkout";
 import { type ScoredDart, type Turn, currentTurn, threeDartAverage } from "@/lib/darts/engine";
 import type { ConfigMap, StateMap } from "@/lib/darts/modes";
+import { CRICKET_NUMBERS, cricketMpr } from "@/lib/darts/modes/cricket";
 import { BOBS_TARGETS } from "@/lib/darts/modes/practice";
 import { type X01Config, liveRemaining } from "@/lib/darts/modes/x01";
 import { fmtAvg } from "@/lib/darts/stats";
@@ -31,7 +32,7 @@ export function DartSlots({ darts, size = "lg" }: { darts: ScoredDart[]; size?: 
                 : "border-2 border-dashed border-wire"
             }`}
           >
-            {d ? dartLabel(d) : ""}
+            {d ? (d.v ? d.v.total : dartLabel(d)) : ""}
           </span>
         );
       })}
@@ -358,6 +359,153 @@ export function ShanghaiBoard({ state, config }: { state: StateMap["shanghai"]; 
           state: i < state.round ? (state.turns[i]?.points > 0 ? "done" : "miss") : i === state.round ? "now" : "todo",
         }))}
       />
+    </Panel>
+  );
+}
+
+/* ------------------------------------------------------------ Cricket */
+
+function Marks({ n }: { n: number }) {
+  if (n <= 0) return <span aria-label="No marks" className="block h-9 w-9" />;
+  return (
+    <svg aria-label={`${n} ${n === 1 ? "mark" : "marks"}`} viewBox="0 0 36 36" className="h-9 w-9" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round">
+      <path d="M10 26 26 10" />
+      {n >= 2 && <path d="M10 10l16 16" />}
+      {n >= 3 && <circle cx="18" cy="18" r="15" strokeWidth="3.5" />}
+    </svg>
+  );
+}
+
+export function CricketBoard({ state, config, players }: { state: StateMap["cricket"]; config: ConfigMap["cricket"]; players: GamePlayer[] }) {
+  const open = currentTurn(state);
+  const solo = players.length === 1;
+  const darts = state.turns.reduce((n, t) => n + t.darts.length, 0);
+  const closedByAll = CRICKET_NUMBERS.map((_, i) => state.marks.every((m) => m[i] >= 3));
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3 rounded-3xl bg-felt p-4 sm:p-5">
+      <div className="grid gap-2" style={{ gridTemplateColumns: `4.5rem repeat(${players.length}, minmax(0, 1fr))` }}>
+        <span />
+        {players.map((p, i) => {
+          const active = state.current === i && !state.finished;
+          return (
+            <div key={p.id} className={`flex min-w-0 flex-col items-center gap-1 rounded-2xl px-2 py-2 ${active ? "bg-ink/50" : ""}`} aria-current={active ? "true" : undefined}>
+              <span className="flex min-w-0 items-center gap-2">
+                <Avatar name={p.name} color={p.color} url={p.avatarUrl} size={active ? 32 : 26} />
+                <span className={`truncate font-semibold ${active ? "text-xl" : "text-dim"}`}>{p.name.split(" ")[0]}</span>
+              </span>
+              {solo ? (
+                <span className="font-display text-4xl leading-none font-extrabold">{darts} <span className="text-lg font-semibold text-dim">darts</span></span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <span className="font-display text-5xl leading-none font-extrabold">{state.points[i]}</span>
+                  {config.legs > 1 && <LegPips won={state.legsWon[i]} target={config.legs} sets={null} />}
+                </span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="grid min-h-0 flex-1 auto-rows-fr gap-1.5" style={{ gridTemplateColumns: `4.5rem repeat(${players.length}, minmax(0, 1fr))` }}>
+        {CRICKET_NUMBERS.map((n, row) => (
+          <div key={n} className={`contents ${closedByAll[row] ? "[&>*]:opacity-35" : ""}`}>
+            <span className="flex items-center justify-center rounded-xl bg-ink/50 font-display text-3xl font-bold">{n === 25 ? "B" : n}</span>
+            {players.map((p, i) => {
+              const m = state.marks[i][row];
+              return (
+                <span
+                  key={p.id}
+                  className={`flex items-center justify-center rounded-xl ${m >= 3 ? "bg-treble/20 text-treble" : "bg-ink/30 text-chalk"} ${state.current === i && !state.finished ? "ring-2 ring-chalk/30 ring-inset" : ""}`}
+                >
+                  <Marks n={m} />
+                </span>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+
+      <div className="flex min-h-14 items-center justify-between gap-3">
+        <DartSlots darts={open?.darts ?? []} />
+        <span className="text-dim">
+          MPR <span className="font-display text-xl font-semibold text-chalk">{fmtMpr(cricketMpr(state.turns.filter((t) => t.player === state.current)))}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function fmtMpr(n: number | null) {
+  return n === null ? "–" : n.toFixed(2);
+}
+
+/* ---------------------------------------------------------------- 121 */
+
+export function OneTwentyOneBoard({ state, config }: { state: StateMap["onetwentyone"]; config: ConfigMap["onetwentyone"] }) {
+  const darts = openDarts(state);
+  const left = config.darts - state.used;
+  const route = state.finished ? null : suggestCheckout(state.remaining, Math.min(3 - darts.length, left));
+  const best = Math.max(0, ...state.results.filter((r) => r.success).map((r) => r.target));
+  return (
+    <Panel>
+      <div className="flex items-start justify-between">
+        <Big value={state.finished ? "Done" : state.remaining} label={state.finished ? "Finished" : `Target ${state.target}`} />
+        <div className="flex flex-col items-end gap-3">
+          <DartSlots darts={darts} />
+          <span className="font-display text-xl text-dim">
+            {left} {left === 1 ? "dart" : "darts"} left
+          </span>
+        </div>
+      </div>
+      <div className="min-h-10">{route ? <Route route={route} /> : !state.finished && <span className="text-dim">No finish from here with the darts left.</span>}</div>
+      <div className="grid grid-cols-3 gap-4">
+        <Stat label="Attempt" value={`${Math.min(state.attempt + 1, config.attempts)}/${config.attempts}`} />
+        <Stat label="Checked out" value={state.results.filter((r) => r.success).length} />
+        <Stat label="Highest" value={best || "–"} />
+      </div>
+      <Track
+        items={[
+          ...state.results.map((r) => ({ label: String(r.target), state: r.success ? ("done" as const) : ("miss" as const) })),
+          ...(state.finished ? [] : [{ label: String(state.target), state: "now" as const }]),
+        ]}
+      />
+    </Panel>
+  );
+}
+
+/* ------------------------------------------------------ Target practice */
+
+export function TargetBoard({ state, config }: { state: StateMap["target"]; config: ConfigMap["target"] }) {
+  const target = config.targets[state.index];
+  const total = config.targets.length * config.dartsPerTarget;
+  const thrown = state.index * config.dartsPerTarget + state.thrown;
+  const hits = state.hits.reduce((n, h) => n + h, 0);
+  const hereHits = state.hits[state.index] ?? 0;
+  return (
+    <Panel>
+      <div className="flex items-start justify-between">
+        <Big value={target ? dartLabel(target) : "Done"} label="Aim at" tone="text-brass" />
+        <DartSlots darts={openDarts(state)} />
+      </div>
+      <div className="grid grid-cols-3 gap-4">
+        <Stat label="Hits" value={config.targets.length > 1 ? `${hereHits} here, ${hits} total` : hits} />
+        <Stat label="Hit rate" value={thrown ? `${Math.round((hits / thrown) * 100)}%` : "–"} />
+        <Stat label="Darts" value={`${thrown}/${total}`} />
+      </div>
+      <div className="flex flex-col gap-3">
+        <div className="h-3 overflow-hidden rounded-full bg-ink/60" aria-hidden>
+          <div className="h-full rounded-full bg-brass transition-[width]" style={{ width: `${(thrown / total) * 100}%` }} />
+        </div>
+        {config.targets.length > 1 && (
+          <Track
+            items={config.targets.map((t, i) => ({
+              label: dartLabel(t),
+              state: i < state.index ? ((state.hits[i] ?? 0) > 0 ? "done" : "miss") : i === state.index ? "now" : "todo",
+            }))}
+          />
+        )}
+      </div>
     </Panel>
   );
 }

@@ -1,13 +1,16 @@
 "use server";
 
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { darts, gamePlayers, games, players, turns } from "@/db/schema";
+import { darts, gamePlayers, games, players, turns, ratings, ratingChanges } from "@/db/schema";
 import { getCurrentPlayer } from "@/lib/auth";
 import { pickColor } from "@/lib/colors";
 import { buildRecords } from "@/lib/darts/records";
+import { type BotProfile, type BotModel, levelModel } from "@/lib/darts/bot";
+import { ghostModel } from "@/lib/queries";
+import { DEFAULT_RATING, updateRating } from "@/lib/ratings/glicko2";
 import { configSchemas, saveGameSchema } from "@/lib/darts/schemas";
 
 export type SaveResult = { ok: true } | { ok: false; retry: boolean; error: string };
@@ -24,11 +27,18 @@ export async function saveGame(input: unknown): Promise<SaveResult> {
     return { ok: false, retry: false, error: "A player was listed twice." };
   }
 
-  const known = await db.select({ id: players.id }).from(players).where(inArray(players.id, game.playerIds));
+  if (!["x01", "cricket"].includes(game.mode) && game.playerIds.length !== 1) {
+    return { ok: false, retry: false, error: "This drill requires one player." };
+  }
+
+  const known = await db.select({ id: players.id, bot: players.bot }).from(players).where(inArray(players.id, game.playerIds));
   if (known.length !== game.playerIds.length) return { ok: false, retry: false, error: "A player no longer exists." };
 
+  const hasBots = known.some((p) => p.bot !== null);
+  const kind = hasBots ? "match" : game.kind;
+  const ranked = kind === "match" && !!game.ranked && !hasBots;
   const rec = buildRecords(game.mode, config.data, game.playerIds, game.darts);
-  if (game.kind === "match" && !rec.finished) {
+  if (kind === "match" && !rec.finished) {
     return { ok: false, retry: false, error: "Only finished matches are saved." };
   }
 
@@ -37,7 +47,8 @@ export async function saveGame(input: unknown): Promise<SaveResult> {
       .insert(games)
       .values({
         id: game.id,
-        kind: game.kind,
+        kind,
+        ranked,
         mode: game.mode,
         config: config.data,
         status: rec.finished ? "finished" : "stopped",
@@ -53,6 +64,24 @@ export async function saveGame(input: unknown): Promise<SaveResult> {
 
     await tx.insert(gamePlayers).values(rec.players.map((p) => ({ ...p, gameId: game.id })));
     if (rec.turns.length) await tx.insert(turns).values(rec.turns.map((t) => ({ ...t, gameId: game.id })));
+    if (ranked && game.mode === "x01" && "startScore" in config.data && config.data.startScore === 501 && known.length >= 2) {
+      // Serialize rating periods, including first-ever ratings, in stable player order.
+      for (const id of [...game.playerIds].sort()) await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${id}, 0))`);
+      const before = await tx.select().from(ratings).where(inArray(ratings.playerId, game.playerIds));
+      const rating = (id: string) => before.find((r) => r.playerId === id) ?? { ...DEFAULT_RATING, games: 0 };
+      const placement = (p: typeof rec.players[number]) => [p.setsWon, p.legsWon];
+      for (const p of rec.players) {
+        const prev = rating(p.playerId);
+        const next = updateRating(prev, rec.players.filter((q) => q.playerId !== p.playerId).map((q) => {
+          const a = placement(p), b = placement(q);
+          const diff = a[0] - b[0] || a[1] - b[1];
+          return { ...rating(q.playerId), score: diff > 0 ? 1 : diff < 0 ? 0 : 0.5 };
+        }));
+        await tx.insert(ratings).values({ playerId: p.playerId, ...next, games: prev.games + 1 })
+          .onConflictDoUpdate({ target: ratings.playerId, set: { ...next, games: prev.games + 1, updatedAt: new Date() } });
+        await tx.insert(ratingChanges).values({ gameId: game.id, playerId: p.playerId, before: prev.rating, after: next.rating, rdAfter: next.rd });
+      }
+    }
     for (let i = 0; i < rec.darts.length; i += 1000) {
       await tx.insert(darts).values(rec.darts.slice(i, i + 1000).map((d) => ({ ...d, gameId: game.id })));
     }
@@ -89,4 +118,29 @@ export async function updateProfile(input: { name: string; color: string }) {
   await db.update(players).set(parsed.data).where(eq(players.id, me.id));
   revalidatePath("/", "layout");
   return { ok: true as const };
+}
+
+const botProfileSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("level"), average: z.number().int().min(20).max(120) }),
+  z.object({ kind: z.literal("ghost"), of: z.uuid(), from: z.iso.datetime(), to: z.iso.datetime() })
+    .refine((p) => new Date(p.from) < new Date(p.to), "The ghost date range is empty"),
+]);
+
+export async function ensureBot(profile: BotProfile): Promise<{ id: string; name: string; color: string; avatarUrl: null; model: BotModel }> {
+  await getCurrentPlayer();
+  const p = botProfileSchema.parse(profile);
+  const source = p.kind === "ghost" ? await db.query.players.findFirst({ where: eq(players.id, p.of) }) : null;
+  if (p.kind === "ghost" && (!source || source.bot)) throw new Error("Ghosts require a real player");
+  const model = p.kind === "level" ? levelModel(p.average) : await ghostModel(p.of, p.from, p.to);
+  const name =
+    p.kind === "level" ? `Bot ${p.average}` : `${source!.name.split(" ")[0]}, last ${Math.round((+new Date(p.to) - +new Date(p.from)) / 86400000) - 1} days`;
+  const bot = await db.transaction(async (tx) => {
+    const key = JSON.stringify(p);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 1))`);
+    const [existing] = await tx.select().from(players).where(sql`${players.bot} = ${key}::jsonb`).limit(1);
+    if (existing) return existing;
+    const [created] = await tx.insert(players).values({ name, color: "#64748b", bot: p }).returning();
+    return created;
+  });
+  return { id: bot.id, name: bot.name, color: bot.color, avatarUrl: null, model };
 }

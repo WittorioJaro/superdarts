@@ -18,6 +18,7 @@ export interface GamePlayer {
 export interface ActiveGame {
   id: string;
   kind: "practice" | "match";
+  ranked?: boolean;
   mode: ModeId;
   config: AnyConfig;
   players: GamePlayer[];
@@ -30,6 +31,7 @@ export interface ActiveGame {
 export interface PendingSave {
   id: string;
   kind: ActiveGame["kind"];
+  ranked?: boolean;
   mode: ModeId;
   config: AnyConfig;
   playerIds: string[];
@@ -106,6 +108,7 @@ export function toPendingSave(g: ActiveGame): PendingSave {
   return {
     id: g.id,
     kind: g.kind,
+    ranked: g.ranked,
     mode: g.mode,
     config: g.config,
     playerIds: g.players.map((p) => p.id),

@@ -1,18 +1,40 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AverageTrend, BoardHeatmap, DoublesTable, Sparkline } from "@/components/charts";
+import { AverageTrend, BoardHeatmap, DoublesTable, MissBreakdown, PracticeVsMatch, RatingChart, SessionFade, Sparkline } from "@/components/charts";
 import { RecentGames } from "@/components/recent-games";
 import { Avatar, BackLink } from "@/components/ui";
 import { getCurrentPlayer } from "@/lib/auth";
-import { gameDetail } from "@/lib/darts/labels";
+import { dartLabel } from "@/lib/darts/board";
+import { gameDetail, gameTitle } from "@/lib/darts/labels";
 import { MODES, type ModeId } from "@/lib/darts/modes";
 import { fmtAvg, fmtPct } from "@/lib/darts/stats";
-import { type StatsRange, type StatsScope, getPlayer, playerStats, practiceHistory, recentGames } from "@/lib/queries";
+import {
+  type StatsRange,
+  type StatsScope,
+  achievements,
+  fatigue,
+  getPlayer,
+  playerStats,
+  practiceHistory,
+  practiceTargets,
+  practiceVsMatch,
+  ratingHistory,
+  recentGames,
+  targetSpread,
+} from "@/lib/queries";
 import { EditProfile } from "./edit-profile";
 import { SignOut } from "./sign-out";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const monthFmt = new Intl.DateTimeFormat("en-GB", { month: "long", year: "numeric" });
+const dayFmt = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric" });
+
+/** `?target=20:3` picks the target-practice target to break down; T20 by default. */
+function parseTarget(v: string | string[] | undefined): { s: number; m: 1 | 2 | 3 } {
+  const [s, m] = String(v ?? "20:3").split(":").map(Number);
+  const ok = ((s >= 1 && s <= 20) || s === 25) && (m === 1 || m === 2 || m === 3) && !(s === 25 && m === 3);
+  return ok ? { s, m: m as 1 | 2 | 3 } : { s: 20, m: 3 };
+}
 
 export default async function PlayerPage({ params, searchParams }: PageProps<"/players/[id]">) {
   const { id } = await params;
@@ -20,24 +42,34 @@ export default async function PlayerPage({ params, searchParams }: PageProps<"/p
   if (!UUID.test(id)) notFound();
   const scope: StatsScope = sp.scope === "match" || sp.scope === "practice" ? sp.scope : "all";
   const range: StatsRange = sp.range === "30d" ? "30d" : "all";
+  const target = parseTarget(sp.target);
 
   const [me, player] = await Promise.all([getCurrentPlayer(), getPlayer(id)]);
   if (!player) notFound();
   const isMe = me.id === player.id;
 
-  const [stats, practice, recent] = await Promise.all([
+  const [stats, practice, recent, rating, awards, targets, spread, weeks, fade] = await Promise.all([
     playerStats(player.id, scope, range),
     practiceHistory(player.id),
     recentGames(player.id, 10),
+    ratingHistory(player.id),
+    achievements(player.id),
+    practiceTargets(player.id),
+    targetSpread(player.id, target, range),
+    practiceVsMatch(player.id),
+    fatigue(player.id),
   ]);
+  const currentRating = rating.length ? rating[rating.length - 1].rating : null;
   const s = stats.scoring;
 
-  const link = (next: { scope?: StatsScope; range?: StatsRange }) => {
+  const link = (next: { scope?: StatsScope; range?: StatsRange; target?: string }) => {
     const q = new URLSearchParams();
     const sc = next.scope ?? scope;
     const rg = next.range ?? range;
+    const tg = next.target ?? `${target.s}:${target.m}`;
     if (sc !== "all") q.set("scope", sc);
     if (rg !== "all") q.set("range", rg);
+    if (tg !== "20:3") q.set("target", tg);
     const qs = q.toString();
     return `/players/${player.id}${qs ? `?${qs}` : ""}`;
   };
@@ -52,8 +84,19 @@ export default async function PlayerPage({ params, searchParams }: PageProps<"/p
             <h1 className="truncate font-display text-5xl font-extrabold tracking-tight">{player.name}</h1>
             <p className="text-dim">
               {player.userId ? "Playing" : "Guest player"} since {monthFmt.format(player.createdAt)}
+              {currentRating !== null && (
+                <>
+                  {" · "}
+                  <span className="font-semibold text-brass">Rating {Math.round(currentRating)}</span>
+                </>
+              )}
             </p>
           </div>
+          {!isMe && (
+            <Link href={`/players/${me.id}/vs/${player.id}`} className="flex h-11 items-center rounded-xl bg-cabinet px-4 font-medium hover:bg-felt">
+              Head to head
+            </Link>
+          )}
           {isMe && (
             <div className="flex gap-2">
               <EditProfile name={player.name} color={player.color} />
@@ -126,8 +169,20 @@ export default async function PlayerPage({ params, searchParams }: PageProps<"/p
           <Num label="Highest visit" value={s.highest || "–"} />
           <Num label="Highest checkout" value={s.highestCheckout || "–"} />
           <Num label="Best 501 leg" value={s.bestLeg ? `${s.bestLeg} darts` : "–"} />
-          <Num label="Darts thrown" value={s.darts.toLocaleString("en-GB")} />
+          <Num label="Darts in X01 and free throw" value={s.darts.toLocaleString("en-GB")} />
+          <Num label="Darts per leg won" value={s.dartsPerLeg ? s.dartsPerLeg.toFixed(1) : "–"} />
+          <Num label="Cricket marks per round" value={stats.cricket.mpr !== null ? stats.cricket.mpr.toFixed(2) : "–"} />
         </dl>
+      </Section>
+
+      {rating.length > 0 && (
+        <Section title="Rating">
+          <RatingChart points={rating} />
+        </Section>
+      )}
+
+      <Section title="Achievements">
+        <Achievements items={awards} />
       </Section>
 
       <div className="grid gap-8 lg:grid-cols-[1fr_1fr]">
@@ -136,6 +191,50 @@ export default async function PlayerPage({ params, searchParams }: PageProps<"/p
         </Section>
         <Section title="Where the darts land">
           <BoardHeatmap heat={stats.heat} />
+        </Section>
+      </div>
+
+      <Section title="Where the misses go">
+        {targets.length === 0 ? (
+          <p className="text-dim">Throw a round of target practice and this shows which way your misses drift.</p>
+        ) : (
+          <div className="flex flex-col gap-5">
+            <nav aria-label="Target" className="flex flex-wrap gap-2">
+              {targets.map((t) => {
+                const key = `${t.s}:${t.m}`;
+                return (
+                  <FilterChip key={key} href={link({ target: key })} active={t.s === target.s && t.m === target.m}>
+                    {dartLabel({ s: t.s, m: t.m as 1 | 2 | 3 })} <span className="ml-1.5 text-sm opacity-70">{t.total}</span>
+                  </FilterChip>
+                );
+              })}
+            </nav>
+            {spread.total === 0 ? (
+              <p className="text-dim">No target practice at {dartLabel(target)} in this range.</p>
+            ) : (
+              <div className="grid gap-6 lg:grid-cols-2">
+                <BoardHeatmap heat={spread.landings} />
+                <div className="flex flex-col gap-3">
+                  <p className="text-lg">
+                    {spread.total} darts at <span className="font-display text-2xl font-bold text-brass">{dartLabel(target)}</span>
+                    {spread.left !== spread.right && spread.left + spread.right > 0 && (
+                      <span className="text-dim">. Misses lean {spread.left > spread.right ? "left" : "right"}.</span>
+                    )}
+                  </p>
+                  <MissBreakdown spread={spread} />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Section>
+
+      <div className="grid gap-8 lg:grid-cols-[1.4fr_1fr]">
+        <Section title="Practice and matches">
+          <PracticeVsMatch weeks={weeks} />
+        </Section>
+        <Section title="Over a session">
+          <SessionFade buckets={fade} />
         </Section>
       </div>
 
@@ -192,6 +291,29 @@ function Num({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+function Achievements({ items }: { items: Awaited<ReturnType<typeof achievements>> }) {
+  const done = items.filter((a) => a.achievedAt);
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-dim">
+        {done.length} of {items.length} unlocked
+      </p>
+      <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {items.map((a) => (
+          <li key={a.id} className={`flex flex-col gap-1 rounded-2xl p-4 ${a.achievedAt ? "bg-felt" : "border-2 border-dashed border-wire text-dim"}`}>
+            <span className="flex items-baseline justify-between gap-3">
+              <span className={`font-display text-2xl font-bold ${a.achievedAt ? "text-chalk" : ""}`}>{a.title}</span>
+              {a.value && <span className="font-display text-2xl font-bold text-brass">{a.value}</span>}
+            </span>
+            <span className="text-sm">{a.description}</span>
+            {a.achievedAt && <span className="text-sm text-dim">{dayFmt.format(a.achievedAt)}</span>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 type Session = Awaited<ReturnType<typeof practiceHistory>>[number];
 
 function PracticeCards({ sessions }: { sessions: Session[] }) {
@@ -217,7 +339,7 @@ function PracticeCards({ sessions }: { sessions: Session[] }) {
         return (
           <li key={key} className="flex flex-col gap-3 rounded-2xl bg-felt p-5">
             <div>
-              <h3 className="font-display text-2xl font-bold">{mode === "x01" ? `Solo ${last.config.startScore}` : MODES[mode].name}</h3>
+              <h3 className="font-display text-2xl font-bold">{mode === "x01" ? `Solo ${last.config.startScore}` : gameTitle(mode, last.config)}</h3>
               <p className="text-sm text-dim">
                 {gameDetail(mode, last.config)}, {list.length} {list.length === 1 ? "session" : "sessions"}
               </p>
@@ -246,6 +368,9 @@ function practiceMetric(mode: ModeId) {
     return { label: "Best average", better: "higher" as const, value: (l: Session) => l.average ?? 0, format: (n: number) => fmtAvg(n) };
   }
   const labels: Partial<Record<ModeId, string>> = {
+    cricket: "Fewest darts",
+    onetwentyone: "Highest finish",
+    target: "Most hits",
     around: "Fewest darts",
     bobs27: "Best score",
     doubles: "Most hits",
@@ -254,7 +379,8 @@ function practiceMetric(mode: ModeId) {
   };
   return {
     label: labels[mode] ?? "Best",
-    better: info.better,
+    // Cricket on your own is about closing out in the fewest darts.
+    better: mode === "cricket" ? ("lower" as const) : info.better,
     value: (l: Session) => l.score,
     format: (n: number) => String(n),
   };

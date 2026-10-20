@@ -2,26 +2,51 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
-import { addGuest } from "@/app/actions";
+import { addGuest, ensureBot } from "@/app/actions";
 import { Avatar, Segmented, Sheet } from "@/components/ui";
+import type { BotModel } from "@/lib/darts/bot";
+import type { ConfigMap } from "@/lib/darts/modes";
 import type { X01Config } from "@/lib/darts/modes/x01";
 import { gameDetail } from "@/lib/darts/labels";
 import { type GamePlayer, gameStore, startGame } from "@/lib/game-store";
 
-type Opts = { startScore: number; out: X01Config["out"]; legs: number; sets: number; useSets: boolean };
-const DEFAULTS: Opts = { startScore: 501, out: "double", legs: 3, sets: 3, useSets: false };
+type Opts = {
+  game: "x01" | "cricket";
+  startScore: number;
+  out: X01Config["out"];
+  legs: number;
+  sets: number;
+  useSets: boolean;
+  variant: ConfigMap["cricket"]["variant"];
+  ranked: boolean;
+};
+const DEFAULTS: Opts = { game: "x01", startScore: 501, out: "double", legs: 3, sets: 3, useSets: false, variant: "standard", ranked: true };
+
+type Lineup = GamePlayer & { bot?: BotModel };
+
+const BOT_LEVELS = [40, 50, 60, 70, 80, 90];
+
+/** Midnight UTC, so the same ghost asked for twice in a day is the same bot. */
+function dayIso(daysAgo: number) {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() - daysAgo);
+  return d.toISOString();
+}
 
 export function MatchSetup({ players: initial, meId }: { players: GamePlayer[]; meId: string }) {
   const router = useRouter();
   // The counter has no server data, so it can be fully loaded before Start is tapped.
   useEffect(() => router.prefetch("/play"), [router]);
-  const [players, setPlayers] = useState(initial);
+  const [players, setPlayers] = useState<Lineup[]>(initial);
   const [picked, setPicked] = useState<string[]>([meId]);
   const [opts, setOpts] = useState<Opts>(DEFAULTS);
   const [guestOpen, setGuestOpen] = useState(false);
   const [guestName, setGuestName] = useState("");
   const [guestError, setGuestError] = useState<string | null>(null);
   const [adding, startAdding] = useTransition();
+  const [botOpen, setBotOpen] = useState(false);
+  const [botError, setBotError] = useState<string | null>(null);
 
   // Restore the last line-up and format, so a rematch next week is one tap.
   useEffect(() => {
@@ -31,6 +56,21 @@ export function MatchSetup({ players: initial, meId }: { players: GamePlayer[]; 
     const known = (saved.picked ?? []).filter((id) => initial.some((p) => p.id === id));
     if (known.length) setPicked(known);
   }, [initial]);
+
+  function addBot(profile: Parameters<typeof ensureBot>[0]) {
+    startAdding(async () => {
+      try {
+        const bot = await ensureBot(profile);
+        setPlayers((ps) => [...ps.filter((p) => p.id !== bot.id), { id: bot.id, name: bot.name, color: bot.color, avatarUrl: null, bot: bot.model }]);
+        setPicked((p) => (p.includes(bot.id) ? p : [...p, bot.id]));
+        setOpts((o) => ({ ...o, game: "x01" }));
+        setBotError(null);
+        setBotOpen(false);
+      } catch {
+        setBotError("Couldn't set up that opponent. Check your connection and try again.");
+      }
+    });
+  }
 
   function toggle(id: string) {
     setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
@@ -54,13 +94,20 @@ export function MatchSetup({ players: initial, meId }: { players: GamePlayer[]; 
     legs: opts.legs,
     sets: opts.useSets ? opts.sets : 1,
   };
+  const cricket: ConfigMap["cricket"] = { variant: opts.variant, legs: opts.legs };
+  const lineup = picked.map((id) => players.find((p) => p.id === id)!).filter(Boolean);
+  const hasBot = lineup.some((p) => p.bot);
+  // Ratings are for 501 between real players only.
+  const canRank = opts.game === "x01" && opts.startScore === 501 && lineup.length >= 2 && !hasBot;
 
   function start() {
     const current = gameStore.active();
     if (current && current.darts.length > 0 && !window.confirm("Starting a new match ends the game in progress. Start anyway?")) return;
-    gameStore.setPref("match", { opts, picked });
-    const lineup = picked.map((id) => players.find((p) => p.id === id)!).filter(Boolean);
-    startGame({ kind: "match", mode: "x01", config, players: lineup });
+    // Bots are added fresh each time, so only people are remembered.
+    gameStore.setPref("match", { opts, picked: picked.filter((id) => !players.find((p) => p.id === id)?.bot) });
+    const ranked = canRank && opts.ranked;
+    if (opts.game === "cricket") startGame({ kind: "match", mode: "cricket", config: cricket, players: lineup, ranked: false });
+    else startGame({ kind: "match", mode: "x01", config, players: lineup, ranked });
     router.push("/play");
   }
 
@@ -112,6 +159,15 @@ export function MatchSetup({ players: initial, meId }: { players: GamePlayer[]; 
               <span className="text-2xl leading-none">+</span> Add player
             </button>
           </li>
+          <li>
+            <button
+              type="button"
+              onClick={() => setBotOpen(true)}
+              className="flex h-full min-h-[68px] w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-wire text-dim transition hover:border-dim hover:text-chalk"
+            >
+              <span className="text-2xl leading-none">+</span> Play a bot
+            </button>
+          </li>
         </ul>
       </section>
 
@@ -119,6 +175,35 @@ export function MatchSetup({ players: initial, meId }: { players: GamePlayer[]; 
         <h2 id="format" className="font-display text-2xl font-bold">
           Game
         </h2>
+        <Segmented
+          label="Game"
+          value={opts.game}
+          onChange={set("game")}
+          options={[
+            { value: "x01", label: "X01" },
+            ...(hasBot ? [] : [{ value: "cricket" as const, label: "Cricket" }]),
+          ]}
+        />
+        {opts.game === "cricket" ? (
+          <>
+            <Segmented
+              label="Points"
+              value={opts.variant}
+              onChange={set("variant")}
+              options={[
+                { value: "standard", label: "Standard" },
+                { value: "cutthroat", label: "Cut-throat" },
+              ]}
+            />
+            <Segmented
+              label="First to … legs"
+              value={opts.legs}
+              onChange={set("legs")}
+              options={[1, 2, 3, 4, 5].map((n) => ({ value: n, label: String(n) }))}
+            />
+          </>
+        ) : (
+          <>
         <Segmented
           label="Start from"
           value={opts.startScore}
@@ -158,6 +243,24 @@ export function MatchSetup({ players: initial, meId }: { players: GamePlayer[]; 
           onChange={set("legs")}
           options={[1, 2, 3, 4, 5, 6, 7].map((n) => ({ value: n, label: String(n) }))}
         />
+          </>
+        )}
+
+        <label className={`flex items-center justify-between gap-4 rounded-2xl bg-cabinet p-4 ${canRank ? "" : "opacity-50"}`}>
+          <span>
+            <span className="block text-lg font-semibold">Ranked</span>
+            <span className="block text-sm text-dim">
+              {canRank ? "Counts towards everyone's 501 rating." : hasBot ? "Games against bots don't change ratings." : "Ratings are for 501 with two or more players."}
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            checked={canRank && opts.ranked}
+            disabled={!canRank}
+            onChange={(e) => set("ranked")(e.target.checked)}
+            className="h-7 w-12 shrink-0 cursor-pointer appearance-none rounded-full bg-wire transition before:block before:h-6 before:w-6 before:translate-x-0.5 before:rounded-full before:bg-chalk before:transition checked:bg-treble checked:before:translate-x-[1.35rem]"
+          />
+        </label>
 
         <button
           type="button"
@@ -166,11 +269,60 @@ export function MatchSetup({ players: initial, meId }: { players: GamePlayer[]; 
           className="mt-2 flex h-20 flex-col items-center justify-center rounded-2xl bg-double transition active:scale-[0.98] disabled:opacity-40"
         >
           <span className="font-display text-3xl leading-none font-bold">
-            {picked.length === 0 ? "Pick a player" : `Start ${opts.startScore}`}
+            {picked.length === 0 ? "Pick a player" : `Start ${opts.game === "cricket" ? "Cricket" : opts.startScore}`}
           </span>
-          {picked.length > 0 && <span className="mt-1 text-sm text-chalk/80">{gameDetail("x01", config as never)}</span>}
+          {picked.length > 0 && (
+            <span className="mt-1 text-sm text-chalk/80">
+              {opts.game === "cricket" ? gameDetail("cricket", cricket as never) : gameDetail("x01", config as never)}
+            </span>
+          )}
         </button>
       </section>
+
+      <Sheet open={botOpen} onClose={() => setBotOpen(false)} label="Play a bot">
+        <div className="flex flex-col gap-5">
+          <div>
+            <h2 className="font-display text-3xl font-bold">Play a bot</h2>
+            <p className="text-dim">It throws its own darts. Games against a bot count towards your stats but not your rating.</p>
+          </div>
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-medium text-dim">Your past self</span>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {[
+                { label: "You, last 30 days", days: 30 },
+                { label: "You, last 90 days", days: 90 },
+              ].map((g) => (
+                <button
+                  key={g.days}
+                  type="button"
+                  disabled={adding}
+                  onClick={() => addBot({ kind: "ghost", of: meId, from: dayIso(g.days), to: dayIso(-1) })}
+                  className="h-14 rounded-xl bg-felt px-4 text-left text-lg font-semibold hover:bg-wire disabled:opacity-40"
+                >
+                  {g.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            <span className="text-sm font-medium text-dim">Bot with a set average</span>
+            <div className="grid grid-cols-3 gap-2">
+              {BOT_LEVELS.map((avg) => (
+                <button
+                  key={avg}
+                  type="button"
+                  disabled={adding}
+                  onClick={() => addBot({ kind: "level", average: avg })}
+                  className="h-14 rounded-xl bg-felt font-display text-2xl font-bold hover:bg-wire disabled:opacity-40"
+                >
+                  {avg}
+                </button>
+              ))}
+            </div>
+          </div>
+          {botError && <p className="text-double">{botError}</p>}
+        </div>
+      </Sheet>
 
       <Sheet open={guestOpen} onClose={() => setGuestOpen(false)} label="Add player">
         <form
