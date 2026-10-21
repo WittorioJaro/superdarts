@@ -69,17 +69,21 @@ export async function persistGame(input: SaveGameInput, createdBy: string, conne
       const before = await tx.select().from(ratings).where(inArray(ratings.playerId, game.playerIds));
       const rating = (id: string) => before.find((r) => r.playerId === id) ?? { ...DEFAULT_RATING, games: 0 };
       const placement = (p: typeof rec.players[number]) => [p.setsWon, p.legsWon];
-      for (const p of rec.players) {
+      const updates = rec.players.map((p) => {
         const prev = rating(p.playerId);
         const next = updateRating(prev, rec.players.filter((q) => q.playerId !== p.playerId).map((q) => {
           const a = placement(p), b = placement(q);
           const diff = a[0] - b[0] || a[1] - b[1];
           return { ...rating(q.playerId), score: diff > 0 ? 1 : diff < 0 ? 0 : 0.5 };
         }));
-        await tx.insert(ratings).values({ playerId: p.playerId, ...next, games: prev.games + 1 })
-          .onConflictDoUpdate({ target: ratings.playerId, set: { ...next, games: prev.games + 1, updatedAt: new Date() } });
-        await tx.insert(ratingChanges).values({ gameId: game.id, playerId: p.playerId, before: prev.rating, after: next.rating, rdAfter: next.rd });
-      }
+        return { playerId: p.playerId, ...next, games: prev.games + 1, updatedAt: new Date(),
+          before: prev.rating };
+      });
+      await tx.insert(ratings).values(updates.map((r) => ({ playerId: r.playerId, rating: r.rating, rd: r.rd, vol: r.vol, games: r.games, updatedAt: r.updatedAt })))
+        .onConflictDoUpdate({ target: ratings.playerId, set: { rating: sql`excluded.rating`, rd: sql`excluded.rd`,
+          vol: sql`excluded.vol`, games: sql`excluded.games`, updatedAt: sql`excluded.updated_at` } });
+      await tx.insert(ratingChanges).values(updates.map((r) => ({ gameId: game.id, playerId: r.playerId,
+        before: r.before, after: r.rating, rdAfter: r.rd })));
     }
     for (let i = 0; i < rec.darts.length; i += 1000) {
       await tx.insert(darts).values(rec.darts.slice(i, i + 1000).map((d) => ({ ...d, gameId: game.id })));

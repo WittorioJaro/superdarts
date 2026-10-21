@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { and, asc, desc, eq, gte, inArray, isNull, isNotNull, lte, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { darts, gamePlayers, games, players, turns, ratings, ratingChanges } from "@/db/schema";
@@ -42,7 +43,7 @@ export async function recentGames(playerId: string, limit = 8): Promise<GameRow[
     where: inArray(games.id, mine),
     columns: { darts: false },
     orderBy: desc(games.finishedAt),
-    with: { players: { with: { player: true }, orderBy: asc(gamePlayers.position) } },
+    with: { players: { with: { player: { columns: { name: true, color: true } } }, orderBy: asc(gamePlayers.position) } },
   });
 
   return rows.map((g) => ({
@@ -76,7 +77,7 @@ export async function playerStats(playerId: string, scope: StatsScope, range: St
     since ? gte(games.finishedAt, since) : undefined,
   );
 
-  const [turnRows, doubleRows, heat, matchRows] = await Promise.all([
+  const [turnRows, doubleRows, heat, matchRows, cricketGames] = await Promise.all([
     db
       .select({
         gameId: turns.gameId,
@@ -120,12 +121,14 @@ export async function playerStats(playerId: string, scope: StatsScope, range: St
         kind: games.kind,
         mode: games.mode,
         gameId: games.id,
+        botFree: sql<boolean>`${noBots()}`,
         legsPlayed: sql<number>`(select count(distinct ${turns.leg})::int from ${turns} where ${turns.gameId} = ${games.id})`,
       })
       .from(gamePlayers)
       .innerJoin(games, eq(games.id, gamePlayers.gameId))
       .where(and(eq(gamePlayers.playerId, playerId), gameFilter))
       .orderBy(asc(games.finishedAt)),
+    cricketTurns(playerId, scope, range),
   ]);
 
   // Free throw has no finishing, so it only feeds the scoring numbers.
@@ -151,11 +154,7 @@ export async function playerStats(playerId: string, scope: StatsScope, range: St
     doubles.set(r.target, d);
   }
 
-  const botGames = await db.selectDistinct({ id: gamePlayers.gameId }).from(gamePlayers).innerJoin(players, eq(players.id, gamePlayers.playerId))
-    .where(and(isNotNull(players.bot), inArray(gamePlayers.gameId, matchRows.map((g) => g.gameId))));
-  const botIds = new Set(botGames.map((g) => g.id));
-  const matches = matchRows.filter((r) => r.kind === "match" && !botIds.has(r.gameId));
-  const cricketGames = await cricketTurns(playerId, gameFilter);
+  const matches = matchRows.filter((r) => r.kind === "match" && r.botFree);
   const cricketVisits = cricketGames.flatMap((g) => g.turns);
   const averages = matchRows
     .filter((r) => r.average !== null && (r.mode === "x01" || r.mode === "scoring"))
@@ -235,7 +234,7 @@ export async function getGame(id: string): Promise<{
     legsWon: number; setsWon: number; average: number | null }[]; darts: Dart[];
 } | null> {
   const g = await db.query.games.findFirst({ where: eq(games.id, id),
-    with: { players: { with: { player: true }, orderBy: asc(gamePlayers.position) } } });
+    with: { players: { with: { player: { columns: { name: true, color: true, avatarUrl: true } } }, orderBy: asc(gamePlayers.position) } } });
   if (!g) return null;
   return { id: g.id, kind: g.kind, mode: g.mode as ModeId, config: g.config as AnyConfig, ranked: g.ranked, startedAt: g.startedAt,
     finishedAt: g.finishedAt, status: g.status, darts: g.darts as Dart[], players: g.players.map((p) => ({ id: p.playerId, name: p.player.name,
@@ -243,31 +242,34 @@ export async function getGame(id: string): Promise<{
       legsWon: p.legsWon, setsWon: p.setsWon, average: p.average })) };
 }
 
-/** Target mode's turn leg is the target index, so repeated numbers in different rings stay distinct. */
-async function targetDarts(playerId: string, range: StatsRange = "all") {
-  return db.select({ s: darts.segment, m: darts.multiplier, hit: darts.hit, target: darts.target,
-    aimM: sql<number>`((${games.config}->'targets'->${turns.leg})->>'m')::int` })
+/** Group landings before sending target history to the server; the same counts feed both profile views. */
+const targetLandings = cache(async (playerId: string, range: StatsRange) => {
+  const aimM = sql<number>`((${games.config}->'targets'->${turns.leg})->>'m')::int`;
+  return db.select({ s: darts.segment, m: darts.multiplier, hit: darts.hit, target: darts.target, aimM,
+    n: sql<number>`count(*)::int` })
     .from(darts).innerJoin(games, eq(games.id, darts.gameId))
     .innerJoin(turns, and(eq(turns.gameId, darts.gameId), eq(turns.seq, darts.turnSeq)))
-    .where(and(eq(darts.playerId, playerId), eq(games.mode, "target"), sinceRange(range)));
-}
+    .where(and(eq(darts.playerId, playerId), eq(games.mode, "target"), sinceRange(range)))
+    .groupBy(darts.segment, darts.multiplier, darts.hit, darts.target, aimM);
+});
 
 export async function targetSpread(playerId: string, target: { s: number; m: 1 | 2 | 3 }, range: StatsRange): Promise<{
   total: number; hits: number; landings: { s: number; m: number; n: number }[]; left: number; right: number; ring: number; other: number;
 }> {
-  const rows = (await targetDarts(playerId, range)).filter((d) => d.target === target.s && d.aimM === target.m);
+  const rows = (await targetLandings(playerId, range)).filter((d) => d.target === target.s && d.aimM === target.m);
   const counts = new Map<string, { s: number; m: number; n: number }>();
-  const result = { total: rows.length, hits: 0, landings: [] as { s: number; m: number; n: number }[], left: 0, right: 0, ring: 0, other: 0 };
+  const result = { total: 0, hits: 0, landings: [] as { s: number; m: number; n: number }[], left: 0, right: 0, ring: 0, other: 0 };
   const i = BOARD_ORDER.indexOf(target.s);
   for (const d of rows) {
+    result.total += d.n;
     const key = `${d.s}:${d.m}`;
     const landing = counts.get(key) ?? { s: d.s, m: d.m, n: 0 };
-    landing.n++; counts.set(key, landing);
-    if (d.hit) result.hits++;
-    else if (d.s === target.s) result.ring++; // Inner and outer singles cannot be distinguished in the input.
-    else if (i >= 0 && d.s === BOARD_ORDER[(i + 19) % 20]) result.left++;
-    else if (i >= 0 && d.s === BOARD_ORDER[(i + 1) % 20]) result.right++;
-    else result.other++;
+    landing.n += d.n; counts.set(key, landing);
+    if (d.hit) result.hits += d.n;
+    else if (d.s === target.s) result.ring += d.n; // Inner and outer singles cannot be distinguished in the input.
+    else if (i >= 0 && d.s === BOARD_ORDER[(i + 19) % 20]) result.left += d.n;
+    else if (i >= 0 && d.s === BOARD_ORDER[(i + 1) % 20]) result.right += d.n;
+    else result.other += d.n;
   }
   result.landings = [...counts.values()].sort((a, b) => a.s - b.s || a.m - b.m);
   return result;
@@ -275,11 +277,11 @@ export async function targetSpread(playerId: string, target: { s: number; m: 1 |
 
 export async function practiceTargets(playerId: string): Promise<{ s: number; m: number; total: number; hits: number }[]> {
   const targets = new Map<string, { s: number; m: number; total: number; hits: number }>();
-  for (const d of await targetDarts(playerId)) {
+  for (const d of await targetLandings(playerId, "all")) {
     if (d.target === null) continue;
     const key = `${d.target}:${d.aimM}`;
     const t = targets.get(key) ?? { s: d.target, m: d.aimM, total: 0, hits: 0 };
-    t.total++; t.hits += Number(d.hit); targets.set(key, t);
+    t.total += d.n; t.hits += d.hit ? d.n : 0; targets.set(key, t);
   }
   return [...targets.values()].sort((a, b) => b.total - a.total || b.s - a.s || b.m - a.m);
 }
@@ -302,39 +304,49 @@ export async function practiceVsMatch(playerId: string): Promise<{ week: Date; p
 }
 
 export async function fatigue(playerId: string): Promise<{ fromMinute: number; toMinute: number; average: number; darts: number }[]> {
-  const rows = await db.select({ at: darts.thrownAt, score: darts.score, bust: turns.bust,
-    first: sql<Date>`(select min(fd.thrown_at) from darts fd where fd.game_id = ${games.id})` })
-    .from(darts).innerJoin(games, eq(games.id, darts.gameId))
+  const mine = db.select({ id: games.id }).from(gamePlayers).innerJoin(games, eq(games.id, gamePlayers.gameId))
+    .where(and(eq(gamePlayers.playerId, playerId), inArray(games.mode, ["x01", "scoring"])));
+  const starts = db.$with("session_starts").as(db.select({ gameId: darts.gameId,
+    first: sql<Date>`min(${darts.thrownAt})`.as("first") }).from(darts)
+    .where(inArray(darts.gameId, mine)).groupBy(darts.gameId));
+  const minute = sql`extract(epoch from (${darts.thrownAt} - ${starts.first})) / 60`;
+  const bucket = sql<number>`case when ${minute} < 0 then -1 when ${minute} < 5 then 0 when ${minute} < 10 then 1
+    when ${minute} < 15 then 2 when ${minute} < 20 then 3 when ${minute} < 30 then 4 when ${minute} < 45 then 5 else 6 end`;
+  const rows = await db.with(starts).select({ bucket,
+    points: sql<number>`sum(case when ${turns.bust} then 0 else ${darts.score} end)::float`,
+    n: sql<number>`count(*)::int` }).from(darts).innerJoin(starts, eq(starts.gameId, darts.gameId))
     .innerJoin(turns, and(eq(turns.gameId, darts.gameId), eq(turns.seq, darts.turnSeq)))
-    .where(and(eq(darts.playerId, playerId), inArray(games.mode, ["x01", "scoring"]), isNotNull(darts.thrownAt)));
-  const bounds = [0, 5, 10, 15, 20, 30, 45, Infinity];
-  return bounds.slice(0, -1).flatMap((fromMinute, i) => {
-    const toMinute = bounds[i + 1];
-    const bucket = rows.filter((r) => { const m = (+r.at! - +new Date(r.first)) / 60000; return m >= fromMinute && m < toMinute; });
-    // 45+ uses MAX_SAFE_INTEGER, a finite bound that survives Server Component serialization/JSON.
-    return bucket.length ? [{ fromMinute, toMinute: Number.isFinite(toMinute) ? toMinute : Number.MAX_SAFE_INTEGER,
-      average: bucket.reduce((n, r) => n + (r.bust ? 0 : r.score), 0) * 3 / bucket.length, darts: bucket.length }] : [];
-  });
+    .where(and(eq(darts.playerId, playerId), isNotNull(darts.thrownAt))).groupBy(bucket);
+  const bounds = [0, 5, 10, 15, 20, 30, 45, Number.MAX_SAFE_INTEGER];
+  return rows.filter((r) => r.bucket >= 0).sort((a, b) => a.bucket - b.bucket).map((r) => ({
+    fromMinute: bounds[r.bucket], toMinute: bounds[r.bucket + 1], average: r.points * 3 / r.n, darts: r.n,
+  }));
 }
 
 export async function ghostModel(playerId: string, from: string, to: string): Promise<BotModel> {
-  const rows = await db.select({ s: darts.segment, m: darts.multiplier, target: darts.target, atDouble: darts.atDouble, hit: darts.hit })
-    .from(darts).innerJoin(games, eq(games.id, darts.gameId)).innerJoin(players, eq(players.id, darts.playerId))
-    .where(and(eq(darts.playerId, playerId), isNull(players.bot), eq(games.mode, "x01"),
-      gte(games.finishedAt, new Date(from)), lte(games.finishedAt, new Date(to))));
-  const [volume] = await db.select({ points: sql<number>`coalesce(sum(${gamePlayers.points}), 0)::float`,
-    darts: sql<number>`coalesce(sum(${gamePlayers.dartsThrown}), 0)::int` }).from(gamePlayers).innerJoin(games, eq(games.id, gamePlayers.gameId))
-    .where(and(eq(gamePlayers.playerId, playerId), eq(games.mode, "x01"), gte(games.finishedAt, new Date(from)), lte(games.finishedAt, new Date(to))));
+  const [[counts], [volume]] = await Promise.all([
+    db.select({ total: sql<number>`count(*)::int`,
+      scoring: sql<number>`count(*) filter (where not ${darts.atDouble})::int`,
+      trebles: sql<number>`count(*) filter (where not ${darts.atDouble} and ${darts.segment} = 20 and ${darts.multiplier} = 3)::int`,
+      twenties: sql<number>`count(*) filter (where not ${darts.atDouble} and ${darts.segment} = 20)::int`,
+      doubles: sql<number>`count(*) filter (where ${darts.atDouble} and ${darts.target} is distinct from 25)::int`,
+      doubleHits: sql<number>`count(*) filter (where ${darts.atDouble} and ${darts.target} is distinct from 25 and ${darts.hit})::int`,
+      bulls: sql<number>`count(*) filter (where ${darts.atDouble} and ${darts.target} = 25)::int`,
+      bullHits: sql<number>`count(*) filter (where ${darts.atDouble} and ${darts.target} = 25 and ${darts.hit})::int`,
+    }).from(darts).innerJoin(games, eq(games.id, darts.gameId)).innerJoin(players, eq(players.id, darts.playerId))
+      .where(and(eq(darts.playerId, playerId), isNull(players.bot), eq(games.mode, "x01"),
+        gte(games.finishedAt, new Date(from)), lte(games.finishedAt, new Date(to)))),
+    db.select({ points: sql<number>`coalesce(sum(${gamePlayers.points}), 0)::float`,
+      darts: sql<number>`coalesce(sum(${gamePlayers.dartsThrown}), 0)::int` }).from(gamePlayers).innerJoin(games, eq(games.id, gamePlayers.gameId))
+      .where(and(eq(gamePlayers.playerId, playerId), eq(games.mode, "x01"), gte(games.finishedAt, new Date(from)), lte(games.finishedAt, new Date(to)))),
+  ]);
   const fallback = levelModel(volume.darts ? volume.points * 3 / volume.darts : 60);
-  if (rows.length < 90) return { ...fallback, label: "Ghost (estimated)" };
-  const scoring = rows.filter((d) => !d.atDouble);
-  const doubles = rows.filter((d) => d.atDouble && d.target !== 25);
-  const bulls = rows.filter((d) => d.atDouble && d.target === 25);
+  if (counts.total < 90) return { ...fallback, label: "Ghost (estimated)" };
   // Non-finishing darts approximate T20 intent; setup singles are inseparable from scoring misses.
-  return { trebleRate: scoring.length ? scoring.filter((d) => d.s === 20 && d.m === 3).length / scoring.length : fallback.trebleRate,
-    singleRate: scoring.length ? scoring.filter((d) => d.s === 20).length / scoring.length : fallback.singleRate,
-    doubleRate: doubles.length >= 9 ? doubles.filter((d) => d.hit).length / doubles.length : fallback.doubleRate,
-    bullRate: bulls.length >= 9 ? bulls.filter((d) => d.hit).length / bulls.length : fallback.bullRate, label: "Ghost" };
+  return { trebleRate: counts.scoring ? counts.trebles / counts.scoring : fallback.trebleRate,
+    singleRate: counts.scoring ? counts.twenties / counts.scoring : fallback.singleRate,
+    doubleRate: counts.doubles >= 9 ? counts.doubleHits / counts.doubles : fallback.doubleRate,
+    bullRate: counts.bulls >= 9 ? counts.bullHits / counts.bulls : fallback.bullRate, label: "Ghost" };
 }
 
 /** Competitive stats come from grouped visits; aggregate-entry attempts use turns, old saves fall back to darts. */
@@ -383,7 +395,7 @@ export async function headToHead(aId: string, bId: string): Promise<{
       sql`exists (select 1 from game_players a where a.game_id = ${games.id} and a.player_id = ${aId})`,
       sql`exists (select 1 from game_players b where b.game_id = ${games.id} and b.player_id = ${bId})`),
     columns: { darts: false }, orderBy: desc(games.finishedAt),
-    with: { players: { with: { player: true }, orderBy: asc(gamePlayers.position) } },
+    with: { players: { with: { player: { columns: { name: true, color: true } } }, orderBy: asc(gamePlayers.position) } },
   });
   const stats = rows.length ? await competitiveStats("all", rows.map((g) => g.id)) : [];
   const side = (id: string) => { const s = stats.find((r) => r.playerId === id); return {
@@ -403,7 +415,11 @@ export async function headToHead(aId: string, bId: string): Promise<{
         winner: p.winner, legsWon: p.legsWon, setsWon: p.setsWon })) })) };
 }
 
-export async function weaknessTargets(playerId: string, limit = 5): Promise<{ s: number; m: 1 | 2 | 3; attempts: number; hits: number; rate: number }[]> {
+export async function weaknessTargets(playerId: string, limit = 5) {
+  return (await allWeaknessTargets(playerId)).slice(0, Math.max(0, limit));
+}
+
+const allWeaknessTargets = cache(async (playerId: string): Promise<{ s: number; m: 1 | 2 | 3; attempts: number; hits: number; rate: number }[]> => {
   const [practice, doubles] = await Promise.all([
     practiceTargets(playerId),
     db.select({ s: darts.target, attempts: sql<number>`count(*)::int`, hits: sql<number>`count(*) filter (where ${darts.hit})::int` })
@@ -422,26 +438,28 @@ export async function weaknessTargets(playerId: string, limit = 5): Promise<{ s:
   const measured = [...targets.values()].filter((t) => t.attempts >= 9).sort((a, b) => a.rate - b.rate || b.attempts - a.attempts || b.s - a.s);
   const defaults = [{ s: 20, m: 3 }, { s: 20, m: 2 }, { s: 16, m: 2 }, { s: 19, m: 3 }, { s: 25, m: 2 }] as const;
   for (const d of defaults) if (!measured.some((t) => t.s === d.s && t.m === d.m)) measured.push({ ...d, attempts: 0, hits: 0, rate: 0 });
-  return measured.slice(0, Math.max(0, limit));
-}
+  return measured;
+});
 
 export async function todaysTraining(playerId: string): Promise<{
   minutes: number; steps: { mode: ModeId; config: AnyConfig; title: string; reason: string; minutes: number }[];
 }> {
+  const band = sql<number>`case when ${turns.startScore} <= 80 then 41 else 81 end`;
   const [weak, finishes] = await Promise.all([
     weaknessTargets(playerId, 10),
-    db.select({ start: turns.startScore, checkout: turns.checkout, attempts: turns.atDouble,
-      legacy: sql<number>`(select count(*)::int from darts ad where ad.game_id = ${turns.gameId} and ad.turn_seq = ${turns.seq} and ad.at_double)` })
-      .from(turns).innerJoin(games, eq(games.id, turns.gameId)).where(and(eq(turns.playerId, playerId), eq(games.mode, "x01"))),
+    db.select({ min: band, checkouts: sql<number>`count(*) filter (where ${turns.checkout})::int`,
+      attempts: sql<number>`sum(greatest(${turns.atDouble}, (select count(*) from darts ad where ad.game_id = ${turns.gameId} and ad.turn_seq = ${turns.seq} and ad.at_double)))::int` })
+      .from(turns).innerJoin(games, eq(games.id, turns.gameId))
+      .where(and(eq(turns.playerId, playerId), eq(games.mode, "x01"), gte(turns.startScore, 41), lte(turns.startScore, 120))).groupBy(band),
   ]);
   const treble = weak.find((t) => t.m === 3) ?? { s: 20, m: 3 as const, rate: 0, attempts: 0 };
   const doubles = weak.filter((t) => t.m === 2).slice(0, 2);
   for (const s of [20, 16]) if (doubles.length < 2 && !doubles.some((t) => t.s === s)) doubles.push({ s, m: 2, attempts: 0, hits: 0, rate: 0 });
   const reason = (t: typeof treble) => t.attempts ? `You hit ${t.s === 25 ? "Bull" : `${t.m === 3 ? "T" : "D"}${t.s}`} ${(t.rate * 100).toFixed(0)}% of the time (${t.attempts} darts)` : "Build a baseline for this target";
   const ranges = [{ min: 41, max: 80 }, { min: 81, max: 120 }].map((r) => {
-    const rows = finishes.filter((f) => f.start !== null && f.start >= r.min && f.start <= r.max);
-    const attempts = rows.reduce((n, t) => n + Math.max(t.attempts, t.legacy), 0);
-    return { ...r, attempts, rate: attempts ? rows.filter((t) => t.checkout).length / attempts : 1 };
+    const totals = finishes.find((f) => f.min === r.min);
+    const attempts = totals?.attempts ?? 0;
+    return { ...r, attempts, rate: attempts ? totals!.checkouts / attempts : 1 };
   }).sort((a, b) => a.rate - b.rate || a.min - b.min);
   const range = ranges[0];
   // Fixed targets make the same player's plan replay identically throughout the day.
@@ -540,7 +558,7 @@ export async function achievements(playerId: string): Promise<{ id: string; titl
     (visits.find((v) => v.gameId === t.gameId && v.leg === t.leg)?.start ?? 0) >= 130);
   add("121-130", "Raising the bar", "Finish a target of at least 130 in the 121 challenge", challenge?.at,
     challenge ? visits.find((v) => v.gameId === challenge.gameId && v.leg === challenge.leg)?.start : null);
-  const cricket = await cricketTurns(playerId);
+  const cricket = await cricketTurns(playerId, "all", "all");
   const nine = cricket.flatMap((g) => g.turns.map((t) => ({ n: t.darts.reduce((n, d) => n + (d.marks ?? 0), 0), at: g.at })))
     .find((v) => v.n >= 9);
   add("nine-mark-cricket", "Nine marks", "Hit a nine-mark cricket visit", nine?.at, nine ? 9 : null);
@@ -548,11 +566,11 @@ export async function achievements(playerId: string): Promise<{ id: string; titl
 }
 
 /** Replaying raw cricket preserves whether marks were useful once a number closed for everyone. */
-async function cricketTurns(playerId: string, filter?: ReturnType<typeof and>) {
+const cricketTurns = cache(async (playerId: string, scope: StatsScope = "all", range: StatsRange = "all") => {
   const rows = await db.select({ config: games.config, darts: games.darts, at: games.finishedAt, position: gamePlayers.position,
     players: sql<number>`(select count(*)::int from game_players cp where cp.game_id = ${games.id})` })
     .from(gamePlayers).innerJoin(games, eq(games.id, gamePlayers.gameId))
-    .where(and(eq(gamePlayers.playerId, playerId), eq(games.mode, "cricket"), filter)).orderBy(asc(games.finishedAt));
+    .where(and(eq(gamePlayers.playerId, playerId), eq(games.mode, "cricket"), scope === "all" ? undefined : eq(games.kind, scope), sinceRange(range))).orderBy(asc(games.finishedAt));
   return rows.map((g) => ({ at: g.at, turns: replay("cricket", g.config as import("./darts/modes/cricket").CricketConfig, g.players, g.darts as Dart[])
     .turns.filter((t) => t.player === g.position) }));
-}
+});

@@ -1,7 +1,7 @@
 "use server";
 
 import { randomInt, randomUUID } from "node:crypto";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { AccessToken, TrackSource } from "livekit-server-sdk";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -16,6 +16,7 @@ import { isGameFinished, rotate, turnOf } from "@/lib/darts/rooms";
 import { configSchemas, dartSchema } from "@/lib/darts/schemas";
 import { cameraIdentity, type CameraLink, type CameraSession, type RoomInvite } from "@/lib/friends-types";
 import { persistGame, type GameTransaction } from "@/lib/persist-game";
+import { revalidateGameData } from "@/lib/revalidate-data";
 import { getRoomSnapshot } from "@/lib/rooms";
 import type { RoomActionResult, RoomSettings, RoomSnapshot } from "@/lib/rooms-types";
 
@@ -38,11 +39,11 @@ function requireRoom(condition: unknown, message: string): asserts condition {
 
 /** Every mutation holds the same row lock until all its writes (including stats) commit. */
 async function withRoom<T extends object = object>(roomId: string, meId: string,
-  action: (tx: GameTransaction, room: Room, members: Member[]) => Promise<RoomActionResult<T>>): Promise<RoomActionResult<T>> {
+  action: (tx: GameTransaction, room: Room, members: Member[]) => Promise<RoomActionResult<T>>, lock: "update" | "share" = "update"): Promise<RoomActionResult<T>> {
   if (!idSchema.safeParse(roomId).success) return { ok: false, error: "Invalid room." };
   try {
     return await db.transaction(async (tx) => {
-      const [room] = await tx.select().from(rooms).where(eq(rooms.id, roomId)).for("update");
+      const [room] = await tx.select().from(rooms).where(eq(rooms.id, roomId)).for(lock);
       requireRoom(room, "The room no longer exists.");
       const members = await tx.select().from(roomPlayers).where(eq(roomPlayers.roomId, roomId)).orderBy(asc(roomPlayers.position));
       requireRoom(members.some((p) => p.playerId === meId), "You're not a member of this room.");
@@ -56,7 +57,7 @@ async function withRoom<T extends object = object>(roomId: string, meId: string,
 
 async function currentGame(tx: GameTransaction, room: Room) {
   requireRoom(room.gameId && room.gameStartedAt, "The game hasn't started yet.");
-  const rows = await tx.select().from(roomDarts).where(and(eq(roomDarts.roomId, room.id), eq(roomDarts.gameId, room.gameId)))
+  const rows = await tx.select({ seq: roomDarts.seq, playerId: roomDarts.playerId, dart: roomDarts.dart }).from(roomDarts).where(and(eq(roomDarts.roomId, room.id), eq(roomDarts.gameId, room.gameId)))
     .orderBy(asc(roomDarts.seq));
   const [saved] = await tx.select({ id: games.id }).from(games).where(eq(games.id, room.gameId));
   return { rows, darts: rows.map((d) => d.dart), saved: !!saved, id: room.gameId, startedAt: room.gameStartedAt };
@@ -71,6 +72,14 @@ async function saveFinished(tx: GameTransaction, room: Room, members: Member[], 
 
 async function touch(tx: GameTransaction, roomId: string) {
   await tx.update(rooms).set({ updatedAt: new Date() }).where(eq(rooms.id, roomId));
+}
+
+async function reorderPlayers(tx: GameTransaction, roomId: string, members: Member[]) {
+  if (!members.length) return;
+  const positions = sql`case ${roomPlayers.playerId} ${sql.join(members.map((p, i) => sql`when ${p.playerId}::uuid then ${i}::smallint`), sql` `)} end`;
+  await tx.update(roomPlayers).set({ position: positions })
+    .where(and(eq(roomPlayers.roomId, roomId), inArray(roomPlayers.playerId, members.map((p) => p.playerId)),
+      sql`${roomPlayers.position} is distinct from ${positions}`));
 }
 
 export async function createRoom(settings: RoomSettings): Promise<RoomActionResult<{ code: string }>> {
@@ -125,9 +134,7 @@ export async function leaveRoom(roomId: string): Promise<RoomActionResult> {
     } else {
       await tx.delete(roomPlayers).where(and(eq(roomPlayers.roomId, roomId), eq(roomPlayers.playerId, me.id)));
       const remaining = members.filter((p) => p.playerId !== me.id);
-      for (const [position, player] of remaining.entries()) {
-        await tx.update(roomPlayers).set({ position }).where(and(eq(roomPlayers.roomId, roomId), eq(roomPlayers.playerId, player.playerId)));
-      }
+      await reorderPlayers(tx, roomId, remaining);
       await touch(tx, roomId);
     }
     return { ok: true };
@@ -145,7 +152,11 @@ export async function closeRoom(roomId: string): Promise<RoomActionResult> {
     await tx.update(rooms).set({ status: "closed", updatedAt: new Date() }).where(eq(rooms.id, roomId));
     return { ok: true };
   });
-  if (result.ok) revalidatePath("/", "layout");
+  if (result.ok) {
+    revalidateGameData();
+    revalidatePath("/online");
+    revalidatePath("/r/[code]", "page");
+  }
   return result;
 }
 
@@ -210,7 +221,11 @@ export async function finishRoomGame(roomId: string): Promise<RoomActionResult> 
     await touch(tx, roomId);
     return { ok: true };
   });
-  if (result.ok) revalidatePath("/", "layout");
+  if (result.ok) {
+    revalidateGameData();
+    revalidatePath("/online");
+    revalidatePath("/r/[code]", "page");
+  }
   return result;
 }
 
@@ -221,23 +236,25 @@ export async function rematchRoom(roomId: string): Promise<RoomActionResult> {
     const game = await currentGame(tx, room);
     requireRoom(isGameFinished(room.mode, room.config, members.length, game.darts), "The game isn't finished yet.");
     await saveFinished(tx, room, members, game);
-    for (const [position, player] of rotate(members).entries()) {
-      await tx.update(roomPlayers).set({ position }).where(and(eq(roomPlayers.roomId, roomId), eq(roomPlayers.playerId, player.playerId)));
-    }
+    await reorderPlayers(tx, roomId, rotate(members));
     await tx.update(rooms).set({ gameId: randomUUID(), gameStartedAt: new Date(), updatedAt: new Date() }).where(eq(rooms.id, roomId));
     return { ok: true };
   });
-  if (result.ok) revalidatePath("/", "layout");
+  if (result.ok) {
+    revalidateGameData();
+    revalidatePath("/online");
+    revalidatePath("/r/[code]", "page");
+  }
   return result;
 }
 
 export async function roomSnapshot(roomId: string): Promise<RoomActionResult<{ room: RoomSnapshot }>> {
   const me = await getCurrentPlayer();
-  return withRoom(roomId, me.id, async (tx) => {
-    const room = await getRoomSnapshot(roomId, tx);
+  return withRoom(roomId, me.id, async (tx, lockedRoom) => {
+    const room = await getRoomSnapshot(roomId, tx, lockedRoom);
     requireRoom(room, "The room no longer exists.");
     return { ok: true, room };
-  });
+  }, "share");
 }
 
 export async function videoToken(roomId: string): Promise<RoomActionResult<{ url: string; token: string }>> {
