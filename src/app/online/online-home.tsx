@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { Suspense, use, useEffect, useState, useTransition } from "react";
 import { createRoom } from "@/app/online-actions";
 import { DEFAULT_OPTS, type GameOpts, GameOptions, cricketConfig, x01Config } from "@/components/game-options";
+import { useMe } from "@/components/me";
 import { Avatar } from "@/components/ui";
 import { gameDetail, gameTitle } from "@/lib/darts/labels";
 import { gameStore } from "@/lib/game-store";
@@ -12,7 +13,8 @@ import type { RoomSettings, RoomSummary } from "@/lib/rooms-types";
 
 const CODE = /^[A-Z0-9]{4}$/;
 
-export function OnlineHome({ rooms, meId }: { rooms: RoomSummary[]; meId: string }) {
+/** `rooms` streams in; the forms work before it arrives. */
+export function OnlineHome({ rooms }: { rooms: Promise<RoomSummary[]> }) {
   const router = useRouter();
   const [opts, setOpts] = useState<GameOpts>(DEFAULT_OPTS);
   const [code, setCode] = useState("");
@@ -84,39 +86,9 @@ export function OnlineHome({ rooms, meId }: { rooms: RoomSummary[]; meId: string
           <p className="text-sm text-dim">Or just open the invite link your friend sent.</p>
         </section>
 
-        {rooms.length > 0 && (
-          <section aria-labelledby="mine" className="flex flex-col gap-3">
-            <h2 id="mine" className="font-display text-2xl font-bold">
-              Your rooms
-            </h2>
-            <ul className="flex flex-col gap-3">
-              {rooms.map((r) => (
-                <li key={r.code}>
-                  <Link href={`/r/${r.code}`} className="flex items-center gap-4 rounded-2xl bg-cabinet p-4 transition hover:bg-felt active:scale-[0.99]">
-                    <span className="font-display text-3xl font-bold tracking-widest">{r.code}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate font-semibold">
-                        {gameTitle(r.settings.mode, r.settings.config as never)}
-                        {r.settings.ranked && <span className="ml-2 text-sm font-normal text-brass">Ranked</span>}
-                      </span>
-                      <span className="block truncate text-sm text-dim">
-                        {r.players.map((p) => (p.id === meId ? "You" : p.name.split(" ")[0])).join(", ")}
-                      </span>
-                    </span>
-                    <span className="flex -space-x-2">
-                      {r.players.slice(0, 4).map((p) => (
-                        <Avatar key={p.id} name={p.name} color={p.color} url={p.avatarUrl} size={32} />
-                      ))}
-                    </span>
-                    <span className={`rounded-full px-3 py-1 text-sm font-semibold ${r.status === "playing" ? "bg-treble/20 text-treble" : "bg-felt text-dim"}`}>
-                      {r.status === "playing" ? "Playing" : "Waiting"}
-                    </span>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+        <Suspense>
+          <YourRooms rooms={rooms} />
+        </Suspense>
       </div>
 
       <section aria-labelledby="create" className="flex flex-col gap-6">
@@ -147,5 +119,44 @@ export function OnlineHome({ rooms, meId }: { rooms: RoomSummary[]; meId: string
         </button>
       </section>
     </div>
+  );
+}
+
+function YourRooms({ rooms: pending }: { rooms: Promise<RoomSummary[]> }) {
+  const rooms = use(pending);
+  const meId = useMe()?.id;
+  if (rooms.length === 0) return null;
+  return (
+    <section aria-labelledby="mine" className="flex flex-col gap-3">
+      <h2 id="mine" className="font-display text-2xl font-bold">
+        Your rooms
+      </h2>
+      <ul className="flex flex-col gap-3">
+        {rooms.map((r) => (
+          <li key={r.code}>
+            <Link href={`/r/${r.code}`} className="flex items-center gap-4 rounded-2xl bg-cabinet p-4 transition hover:bg-felt active:scale-[0.99]">
+              <span className="font-display text-3xl font-bold tracking-widest">{r.code}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-semibold">
+                  {gameTitle(r.settings.mode, r.settings.config as never)}
+                  {r.settings.ranked && <span className="ml-2 text-sm font-normal text-brass">Ranked</span>}
+                </span>
+                <span className="block truncate text-sm text-dim">
+                  {r.players.map((p) => (p.id === meId ? "You" : p.name.split(" ")[0])).join(", ")}
+                </span>
+              </span>
+              <span className="flex -space-x-2">
+                {r.players.slice(0, 4).map((p) => (
+                  <Avatar key={p.id} name={p.name} color={p.color} url={p.avatarUrl} size={32} />
+                ))}
+              </span>
+              <span className={`rounded-full px-3 py-1 text-sm font-semibold ${r.status === "playing" ? "bg-treble/20 text-treble" : "bg-felt text-dim"}`}>
+                {r.status === "playing" ? "Playing" : "Waiting"}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

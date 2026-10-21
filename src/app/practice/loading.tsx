@@ -1,5 +1,10 @@
-import { PageSkeleton } from "@/components/page-skeleton";
+import { PageShell } from "@/components/page-shell";
+import { PracticePickerSkeleton } from "./practice-picker";
 
 export default function Loading() {
-  return <PageSkeleton title="Practice" />;
+  return (
+    <PageShell busy title="Practice">
+      <PracticePickerSkeleton />
+    </PageShell>
+  );
 }

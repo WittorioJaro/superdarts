@@ -1,5 +1,10 @@
-import { PageSkeleton } from "@/components/page-skeleton";
+import { RecentGamesSkeleton } from "@/components/skeleton";
+import { HomeView } from "./home-view";
 
 export default function Loading() {
-  return <PageSkeleton back={false} />;
+  return (
+    <HomeView>
+      <RecentGamesSkeleton />
+    </HomeView>
+  );
 }

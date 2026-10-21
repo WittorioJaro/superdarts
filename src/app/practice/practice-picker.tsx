@@ -1,15 +1,18 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, use, useEffect, useState } from "react";
+import { useMe } from "@/components/me";
+import { Bone } from "@/components/skeleton";
 import { Segmented, Sheet } from "@/components/ui";
 import { dartLabel } from "@/lib/darts/board";
 import { MODES, type ModeId } from "@/lib/darts/modes";
 import { checkoutTargets, doublesTargets } from "@/lib/darts/modes/practice";
-import { type GamePlayer, gameStore, startGame } from "@/lib/game-store";
+import { gameStore, startGame } from "@/lib/game-store";
 import { type PlanStep, startPlanStep } from "@/lib/plan-store";
 
 type Weak = { s: number; m: 1 | 2 | 3; attempts: number; hits: number; rate: number };
+export type PracticeStats = { weak: Weak[]; plan: { minutes: number; steps: PlanStep[] } };
 
 type Drill = {
   /** Unique per tile; several tiles can share a mode. */
@@ -87,8 +90,10 @@ function buildConfig(drill: Drill, o: Opts, weak: Weak[]) {
   }
 }
 
-export function PracticePicker({ me, weak, plan }: { me: GamePlayer; weak: Weak[]; plan: { minutes: number; steps: PlanStep[] } }) {
+/** The drills draw at once; only the parts built from your stats wait for `stats`. */
+export function PracticePicker({ stats }: { stats: Promise<PracticeStats> }) {
   const router = useRouter();
+  const me = useMe()!;
   // The counter has no server data, so it can be fully loaded before Start is tapped.
   useEffect(() => router.prefetch("/play"), [router]);
   const [open, setOpen] = useState<Drill | null>(null);
@@ -105,16 +110,17 @@ export function PracticePicker({ me, weak, plan }: { me: GamePlayer; weak: Weak[
     return !!current && current.darts.length > 0 && !window.confirm("Starting a new game ends the one in progress. Start anyway?");
   }
 
-  function start() {
+  async function start() {
     if (!open || replacesGame()) return;
     gameStore.setPref(`practice:${open.id}`, opts);
+    const { weak } = await stats;
     startGame({ kind: "practice", mode: open.mode, config: buildConfig(open, opts, weak) as never, players: [me] });
     router.push("/play");
   }
 
-  function startTraining() {
+  async function startTraining() {
     if (replacesGame()) return;
-    startPlanStep(plan.steps, 0, me);
+    startPlanStep((await stats).plan.steps, 0, me);
     router.push("/play");
   }
 
@@ -122,41 +128,11 @@ export function PracticePicker({ me, weak, plan }: { me: GamePlayer; weak: Weak[
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setTraining(true)}
-        className="flex flex-col gap-4 rounded-[2rem] bg-treble p-7 text-left text-ink transition active:scale-[0.99] sm:flex-row sm:items-end sm:justify-between"
-      >
-        <span>
-          <span className="block text-lg font-semibold text-ink/70">Today&apos;s training, {plan.minutes} minutes</span>
-          <span className="block font-display text-5xl leading-none font-extrabold tracking-tight sm:text-6xl">Built from your stats</span>
-        </span>
-        <span className="flex flex-wrap gap-2">
-          {plan.steps.map((s, i) => (
-            <span key={i} className="rounded-xl bg-ink/15 px-3 py-1.5 font-semibold">
-              {s.title}
-            </span>
-          ))}
-        </span>
-      </button>
+      <Suspense fallback={<TrainingCardSkeleton />}>
+        <TrainingCard stats={stats} onOpen={() => setTraining(true)} />
+      </Suspense>
 
-      <ul className="grid grid-cols-1 gap-3 pb-6 sm:grid-cols-2 lg:grid-cols-3">
-        {DRILLS.map((d) => (
-          <li key={d.id}>
-            <button
-              type="button"
-              onClick={() => choose(d)}
-              className="group flex h-full min-h-40 w-full flex-col justify-between gap-4 rounded-3xl bg-cabinet p-6 text-left transition hover:bg-felt active:scale-[0.99]"
-            >
-              <span className="font-display text-5xl font-extrabold text-brass">{d.mark}</span>
-              <span>
-                <span className="block font-display text-3xl font-bold">{d.name ?? MODES[d.mode].name}</span>
-                <span className="mt-1 block text-dim">{d.blurb ?? MODES[d.mode].blurb}</span>
-              </span>
-            </button>
-          </li>
-        ))}
-      </ul>
+      <DrillGrid onChoose={choose} />
 
       <Sheet open={!!open} onClose={() => setOpen(null)} label={open ? (open.name ?? MODES[open.mode].name) : "Drill"}>
         {open && (
@@ -185,14 +161,9 @@ export function PracticePicker({ me, weak, plan }: { me: GamePlayer; weak: Weak[
 
             {open.id === "weakness" && (
               <>
-                <ul className="flex flex-col divide-y divide-wire rounded-2xl bg-felt">
-                  {weak.map((w) => (
-                    <li key={`${w.s}:${w.m}`} className="flex items-center justify-between px-4 py-3">
-                      <span className="font-display text-2xl font-bold">{dartLabel(w)}</span>
-                      <span className="text-dim">{w.attempts ? `${Math.round(w.rate * 100)}% of ${w.attempts} darts` : "No data yet"}</span>
-                    </li>
-                  ))}
-                </ul>
+                <Suspense fallback={<Bone className="h-60 rounded-2xl bg-felt" />}>
+                  <WeakTargets stats={stats} />
+                </Suspense>
                 <Segmented
                   label="Darts at each"
                   value={Number(opts.darts)}
@@ -339,29 +310,126 @@ export function PracticePicker({ me, weak, plan }: { me: GamePlayer; weak: Weak[
 
       <Sheet open={training} onClose={() => setTraining(false)} label="Today's training">
         <div className="flex flex-col gap-5">
-          <div>
-            <h2 className="font-display text-4xl font-extrabold">Today&apos;s training</h2>
-            <p className="mt-1 text-dim">About {plan.minutes} minutes. Picked from where your stats say you lose the most points.</p>
-          </div>
-          <ol className="flex flex-col gap-2">
-            {plan.steps.map((s, i) => (
-              <li key={i} className="flex items-start gap-4 rounded-2xl bg-felt p-4">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-chalk font-display text-xl font-bold text-ink">{i + 1}</span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-baseline justify-between gap-3">
-                    <span className="font-display text-2xl font-bold">{s.title}</span>
-                    <span className="shrink-0 text-dim">{s.minutes} min</span>
-                  </span>
-                  <span className="block text-dim">{s.reason}</span>
-                </span>
-              </li>
-            ))}
-          </ol>
+          <Suspense fallback={<Bone className="h-80 rounded-2xl bg-felt" />}>
+            <TrainingPlan stats={stats} />
+          </Suspense>
           <button type="button" onClick={startTraining} className="h-16 rounded-2xl bg-treble font-display text-2xl font-bold text-ink transition active:scale-[0.98]">
             Start training
           </button>
         </div>
       </Sheet>
+    </>
+  );
+}
+
+function TrainingCard({ stats, onOpen }: { stats: Promise<PracticeStats>; onOpen: () => void }) {
+  const { plan } = use(stats);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex flex-col gap-4 rounded-[2rem] bg-treble p-7 text-left text-ink transition active:scale-[0.99] sm:flex-row sm:items-end sm:justify-between"
+    >
+      <span>
+        <span className="block text-lg font-semibold text-ink/70">Today&apos;s training, {plan.minutes} minutes</span>
+        <span className="block font-display text-5xl leading-none font-extrabold tracking-tight sm:text-6xl">Built from your stats</span>
+      </span>
+      <span className="flex flex-wrap gap-2">
+        {plan.steps.map((s, i) => (
+          <span key={i} className="rounded-xl bg-ink/15 px-3 py-1.5 font-semibold">
+            {s.title}
+          </span>
+        ))}
+      </span>
+    </button>
+  );
+}
+
+/** Same box as TrainingCard, with the number of minutes and the steps still to come. */
+function TrainingCardSkeleton() {
+  return (
+    <div aria-hidden className="flex flex-col gap-4 rounded-[2rem] bg-treble p-7 sm:flex-row sm:items-end sm:justify-between">
+      <span>
+        <span className="block text-lg font-semibold text-ink/70">Today&apos;s training</span>
+        <span className="block font-display text-5xl leading-none font-extrabold tracking-tight text-ink sm:text-6xl">Built from your stats</span>
+      </span>
+      <span className="flex flex-wrap gap-2">
+        {[96, 128, 80].map((w, i) => (
+          <Bone key={i} className="h-9 bg-ink/15" style={{ width: w }} delay={i * 120} />
+        ))}
+      </span>
+    </div>
+  );
+}
+
+function WeakTargets({ stats }: { stats: Promise<PracticeStats> }) {
+  const { weak } = use(stats);
+  return (
+    <ul className="flex flex-col divide-y divide-wire rounded-2xl bg-felt">
+      {weak.map((w) => (
+        <li key={`${w.s}:${w.m}`} className="flex items-center justify-between px-4 py-3">
+          <span className="font-display text-2xl font-bold">{dartLabel(w)}</span>
+          <span className="text-dim">{w.attempts ? `${Math.round(w.rate * 100)}% of ${w.attempts} darts` : "No data yet"}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function TrainingPlan({ stats }: { stats: Promise<PracticeStats> }) {
+  const { plan } = use(stats);
+  return (
+    <>
+      <div>
+        <h2 className="font-display text-4xl font-extrabold">Today&apos;s training</h2>
+        <p className="mt-1 text-dim">About {plan.minutes} minutes. Picked from where your stats say you lose the most points.</p>
+      </div>
+      <ol className="flex flex-col gap-2">
+        {plan.steps.map((s, i) => (
+          <li key={i} className="flex items-start gap-4 rounded-2xl bg-felt p-4">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-chalk font-display text-xl font-bold text-ink">{i + 1}</span>
+            <span className="min-w-0 flex-1">
+              <span className="flex items-baseline justify-between gap-3">
+                <span className="font-display text-2xl font-bold">{s.title}</span>
+                <span className="shrink-0 text-dim">{s.minutes} min</span>
+              </span>
+              <span className="block text-dim">{s.reason}</span>
+            </span>
+          </li>
+        ))}
+      </ol>
+    </>
+  );
+}
+
+function DrillGrid({ onChoose }: { onChoose?: (d: Drill) => void }) {
+  return (
+      <ul className="grid grid-cols-1 gap-3 pb-6 sm:grid-cols-2 lg:grid-cols-3">
+        {DRILLS.map((d) => (
+          <li key={d.id}>
+            <button
+              type="button"
+              onClick={() => onChoose?.(d)}
+              className="group flex h-full min-h-40 w-full flex-col justify-between gap-4 rounded-3xl bg-cabinet p-6 text-left transition hover:bg-felt active:scale-[0.99]"
+            >
+              <span className="font-display text-5xl font-extrabold text-brass">{d.mark}</span>
+              <span>
+                <span className="block font-display text-3xl font-bold">{d.name ?? MODES[d.mode].name}</span>
+                <span className="mt-1 block text-dim">{d.blurb ?? MODES[d.mode].blurb}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+  );
+}
+
+/** The page as it first draws, before your stats arrive. */
+export function PracticePickerSkeleton() {
+  return (
+    <>
+      <TrainingCardSkeleton />
+      <DrillGrid />
     </>
   );
 }
