@@ -1,91 +1,24 @@
 "use server";
 
-import { eq, inArray, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { darts, gamePlayers, games, players, turns, ratings, ratingChanges } from "@/db/schema";
+import { players } from "@/db/schema";
 import { getCurrentPlayer } from "@/lib/auth";
 import { pickColor } from "@/lib/colors";
-import { buildRecords } from "@/lib/darts/records";
 import { type BotProfile, type BotModel, levelModel } from "@/lib/darts/bot";
 import { ghostModel } from "@/lib/queries";
-import { DEFAULT_RATING, updateRating } from "@/lib/ratings/glicko2";
-import { configSchemas, saveGameSchema } from "@/lib/darts/schemas";
+import type { SaveGameInput } from "@/lib/darts/schemas";
+import { persistGame, type SaveResult } from "@/lib/persist-game";
 
-export type SaveResult = { ok: true } | { ok: false; retry: boolean; error: string };
+export type { SaveResult } from "@/lib/persist-game";
 
 export async function saveGame(input: unknown): Promise<SaveResult> {
   const me = await getCurrentPlayer();
 
-  const parsed = saveGameSchema.safeParse(input);
-  if (!parsed.success) return { ok: false, retry: false, error: "The game data was malformed." };
-  const game = parsed.data;
-  const config = configSchemas[game.mode].safeParse(game.config);
-  if (!config.success) return { ok: false, retry: false, error: "The game settings were malformed." };
-  if (new Set(game.playerIds).size !== game.playerIds.length) {
-    return { ok: false, retry: false, error: "A player was listed twice." };
-  }
-
-  if (!["x01", "cricket"].includes(game.mode) && game.playerIds.length !== 1) {
-    return { ok: false, retry: false, error: "This drill requires one player." };
-  }
-
-  const known = await db.select({ id: players.id, bot: players.bot }).from(players).where(inArray(players.id, game.playerIds));
-  if (known.length !== game.playerIds.length) return { ok: false, retry: false, error: "A player no longer exists." };
-
-  const hasBots = known.some((p) => p.bot !== null);
-  const kind = hasBots ? "match" : game.kind;
-  const ranked = kind === "match" && !!game.ranked && !hasBots;
-  const rec = buildRecords(game.mode, config.data, game.playerIds, game.darts);
-  if (kind === "match" && !rec.finished) {
-    return { ok: false, retry: false, error: "Only finished matches are saved." };
-  }
-
-  await db.transaction(async (tx) => {
-    const inserted = await tx
-      .insert(games)
-      .values({
-        id: game.id,
-        kind,
-        ranked,
-        mode: game.mode,
-        config: config.data,
-        status: rec.finished ? "finished" : "stopped",
-        winnerId: rec.winner,
-        createdBy: me.id,
-        startedAt: new Date(game.startedAt),
-        darts: game.darts,
-      })
-      .onConflictDoNothing()
-      .returning({ id: games.id });
-    // Already saved by an earlier attempt.
-    if (inserted.length === 0) return;
-
-    await tx.insert(gamePlayers).values(rec.players.map((p) => ({ ...p, gameId: game.id })));
-    if (rec.turns.length) await tx.insert(turns).values(rec.turns.map((t) => ({ ...t, gameId: game.id })));
-    if (ranked && game.mode === "x01" && "startScore" in config.data && config.data.startScore === 501 && known.length >= 2) {
-      // Serialize rating periods, including first-ever ratings, in stable player order.
-      for (const id of [...game.playerIds].sort()) await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${id}, 0))`);
-      const before = await tx.select().from(ratings).where(inArray(ratings.playerId, game.playerIds));
-      const rating = (id: string) => before.find((r) => r.playerId === id) ?? { ...DEFAULT_RATING, games: 0 };
-      const placement = (p: typeof rec.players[number]) => [p.setsWon, p.legsWon];
-      for (const p of rec.players) {
-        const prev = rating(p.playerId);
-        const next = updateRating(prev, rec.players.filter((q) => q.playerId !== p.playerId).map((q) => {
-          const a = placement(p), b = placement(q);
-          const diff = a[0] - b[0] || a[1] - b[1];
-          return { ...rating(q.playerId), score: diff > 0 ? 1 : diff < 0 ? 0 : 0.5 };
-        }));
-        await tx.insert(ratings).values({ playerId: p.playerId, ...next, games: prev.games + 1 })
-          .onConflictDoUpdate({ target: ratings.playerId, set: { ...next, games: prev.games + 1, updatedAt: new Date() } });
-        await tx.insert(ratingChanges).values({ gameId: game.id, playerId: p.playerId, before: prev.rating, after: next.rating, rdAfter: next.rd });
-      }
-    }
-    for (let i = 0; i < rec.darts.length; i += 1000) {
-      await tx.insert(darts).values(rec.darts.slice(i, i + 1000).map((d) => ({ ...d, gameId: game.id })));
-    }
-  });
+  const result = await persistGame(input as SaveGameInput, me.id);
+  if (!result.ok) return result;
 
   revalidatePath("/", "layout");
   return { ok: true };

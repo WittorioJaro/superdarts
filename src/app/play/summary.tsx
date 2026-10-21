@@ -33,7 +33,11 @@ export function Summary({
   onAgain,
   onDone,
   onUndo,
+  canUndo = true,
   plan,
+  doneLabel = "Save and finish",
+  againLabel,
+  note,
 }: {
   game: ActiveGame;
   state: AnyState;
@@ -41,6 +45,11 @@ export function Summary({
   onAgain: () => void;
   onDone: () => void;
   onUndo: () => void;
+  canUndo?: boolean;
+  doneLabel?: string;
+  againLabel?: string;
+  /** A line above the buttons, e.g. who else is still looking at this result. */
+  note?: string | null;
   /** Set when this game is one step of a training plan. */
   plan: { index: number; steps: string[]; onNext: () => void } | null;
 }) {
@@ -137,8 +146,9 @@ export function Summary({
         </ol>
       )}
 
-      <div className="safe-bottom sticky bottom-0 mt-auto grid gap-3 bg-ink pt-3 sm:grid-cols-[auto_1fr_1fr]">
-        {!stopped && (
+      {note && <p className="text-center text-dim">{note}</p>}
+      <div className={`safe-bottom sticky bottom-0 mt-auto grid gap-3 bg-ink pt-3 ${!stopped && canUndo ? "sm:grid-cols-[auto_1fr_1fr]" : "sm:grid-cols-2"}`}>
+        {!stopped && canUndo && (
           <button type="button" onClick={onUndo} className="h-16 rounded-2xl bg-cabinet px-6 text-lg font-semibold text-dim hover:text-chalk">
             Undo last dart
           </button>
@@ -149,11 +159,11 @@ export function Summary({
           </button>
         ) : (
           <button type="button" onClick={onAgain} className="h-16 rounded-2xl bg-felt font-display text-2xl font-bold hover:bg-wire">
-            {isMatch ? "Rematch" : "Go again"}
+            {againLabel ?? (isMatch ? "Rematch" : "Go again")}
           </button>
         )}
         <button type="button" onClick={onDone} className="h-16 rounded-2xl bg-chalk font-display text-2xl font-bold text-ink">
-          Save and finish
+          {doneLabel}
         </button>
       </div>
     </div>

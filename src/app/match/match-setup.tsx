@@ -3,24 +3,14 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { addGuest, ensureBot } from "@/app/actions";
-import { Avatar, Segmented, Sheet } from "@/components/ui";
+import { DEFAULT_OPTS, type GameOpts, GameOptions, cricketConfig, x01Config } from "@/components/game-options";
+import { Avatar, Sheet } from "@/components/ui";
 import type { BotModel } from "@/lib/darts/bot";
-import type { ConfigMap } from "@/lib/darts/modes";
-import type { X01Config } from "@/lib/darts/modes/x01";
 import { gameDetail } from "@/lib/darts/labels";
 import { type GamePlayer, gameStore, startGame } from "@/lib/game-store";
 
-type Opts = {
-  game: "x01" | "cricket";
-  startScore: number;
-  out: X01Config["out"];
-  legs: number;
-  sets: number;
-  useSets: boolean;
-  variant: ConfigMap["cricket"]["variant"];
-  ranked: boolean;
-};
-const DEFAULTS: Opts = { game: "x01", startScore: 501, out: "double", legs: 3, sets: 3, useSets: false, variant: "standard", ranked: true };
+type Opts = GameOpts;
+const DEFAULTS = DEFAULT_OPTS;
 
 type Lineup = GamePlayer & { bot?: BotModel };
 
@@ -88,13 +78,8 @@ export function MatchSetup({ players: initial, meId }: { players: GamePlayer[]; 
     });
   }
 
-  const config: X01Config = {
-    startScore: opts.startScore,
-    out: opts.out,
-    legs: opts.legs,
-    sets: opts.useSets ? opts.sets : 1,
-  };
-  const cricket: ConfigMap["cricket"] = { variant: opts.variant, legs: opts.legs };
+  const config = x01Config(opts);
+  const cricket = cricketConfig(opts);
   const lineup = picked.map((id) => players.find((p) => p.id === id)!).filter(Boolean);
   const hasBot = lineup.some((p) => p.bot);
   // Ratings are for 501 between real players only.
@@ -110,8 +95,6 @@ export function MatchSetup({ players: initial, meId }: { players: GamePlayer[]; 
     else startGame({ kind: "match", mode: "x01", config, players: lineup, ranked });
     router.push("/play");
   }
-
-  const set = <K extends keyof Opts>(key: K) => (v: Opts[K]) => setOpts((o) => ({ ...o, [key]: v }));
 
   return (
     <div className="grid gap-8 pb-6 lg:grid-cols-[1.1fr_1fr]">
@@ -175,92 +158,13 @@ export function MatchSetup({ players: initial, meId }: { players: GamePlayer[]; 
         <h2 id="format" className="font-display text-2xl font-bold">
           Game
         </h2>
-        <Segmented
-          label="Game"
-          value={opts.game}
-          onChange={set("game")}
-          options={[
-            { value: "x01", label: "X01" },
-            ...(hasBot ? [] : [{ value: "cricket" as const, label: "Cricket" }]),
-          ]}
+        <GameOptions
+          opts={opts}
+          onChange={setOpts}
+          allowCricket={!hasBot}
+          canRank={canRank}
+          rankHint={canRank ? "Counts towards everyone's 501 rating." : hasBot ? "Games against bots don't change ratings." : "Ratings are for 501 with two or more players."}
         />
-        {opts.game === "cricket" ? (
-          <>
-            <Segmented
-              label="Points"
-              value={opts.variant}
-              onChange={set("variant")}
-              options={[
-                { value: "standard", label: "Standard" },
-                { value: "cutthroat", label: "Cut-throat" },
-              ]}
-            />
-            <Segmented
-              label="First to … legs"
-              value={opts.legs}
-              onChange={set("legs")}
-              options={[1, 2, 3, 4, 5].map((n) => ({ value: n, label: String(n) }))}
-            />
-          </>
-        ) : (
-          <>
-        <Segmented
-          label="Start from"
-          value={opts.startScore}
-          onChange={set("startScore")}
-          options={[301, 501, 701].map((n) => ({ value: n, label: String(n) }))}
-        />
-        <Segmented
-          label="Finish on"
-          value={opts.out}
-          onChange={set("out")}
-          options={[
-            { value: "double", label: "Double" },
-            { value: "master", label: "Double or treble" },
-            { value: "single", label: "Anything" },
-          ]}
-        />
-        <Segmented
-          label="Play"
-          value={opts.useSets ? "sets" : "legs"}
-          onChange={(v) => set("useSets")(v === "sets")}
-          options={[
-            { value: "legs", label: "Legs" },
-            { value: "sets", label: "Sets" },
-          ]}
-        />
-        {opts.useSets && (
-          <Segmented
-            label="First to … sets"
-            value={opts.sets}
-            onChange={set("sets")}
-            options={[1, 2, 3, 4, 5].map((n) => ({ value: n, label: String(n) }))}
-          />
-        )}
-        <Segmented
-          label={opts.useSets ? "First to … legs per set" : "First to … legs"}
-          value={opts.legs}
-          onChange={set("legs")}
-          options={[1, 2, 3, 4, 5, 6, 7].map((n) => ({ value: n, label: String(n) }))}
-        />
-          </>
-        )}
-
-        <label className={`flex items-center justify-between gap-4 rounded-2xl bg-cabinet p-4 ${canRank ? "" : "opacity-50"}`}>
-          <span>
-            <span className="block text-lg font-semibold">Ranked</span>
-            <span className="block text-sm text-dim">
-              {canRank ? "Counts towards everyone's 501 rating." : hasBot ? "Games against bots don't change ratings." : "Ratings are for 501 with two or more players."}
-            </span>
-          </span>
-          <input
-            type="checkbox"
-            checked={canRank && opts.ranked}
-            disabled={!canRank}
-            onChange={(e) => set("ranked")(e.target.checked)}
-            className="h-7 w-12 shrink-0 cursor-pointer appearance-none rounded-full bg-wire transition before:block before:h-6 before:w-6 before:translate-x-0.5 before:rounded-full before:bg-chalk before:transition checked:bg-treble checked:before:translate-x-[1.35rem]"
-          />
-        </label>
 
         <button
           type="button"

@@ -3,6 +3,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { SUPABASE_KEY, SUPABASE_URL } from "@/lib/supabase/env";
 
 const PUBLIC_PATHS = ["/login", "/auth"];
+const NEXT_COOKIE = "sd_next";
 
 /** Keeps the Supabase session fresh and sends signed-out visitors to the login screen. */
 export async function proxy(request: NextRequest) {
@@ -27,7 +28,10 @@ export async function proxy(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.search = "";
-    return NextResponse.redirect(url);
+    const res = NextResponse.redirect(url);
+    // Invite links must survive the Google round trip, so remember where the visitor was going.
+    if (path !== "/") res.cookies.set(NEXT_COOKIE, path + request.nextUrl.search, { path: "/", maxAge: 900, sameSite: "lax", httpOnly: true });
+    return res;
   }
 
   return response;

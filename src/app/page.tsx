@@ -50,14 +50,13 @@ export default async function Home() {
           <span className="mt-2 text-lg font-medium text-chalk/80">Pick who&apos;s playing. Every dart counts on their profile.</span>
         </Link>
 
-        <div
-          aria-disabled
-          className="relative flex min-h-44 flex-col justify-end rounded-[2rem] border-2 border-dashed border-wire p-7 text-dim"
+        <Link
+          href="/online"
+          className="group relative flex min-h-44 flex-col justify-end overflow-hidden rounded-[2rem] bg-felt p-7 ring-2 ring-wire transition active:scale-[0.99]"
         >
-          <span className="absolute top-6 right-6 rounded-full bg-felt px-3 py-1 text-sm font-semibold text-chalk">Coming soon</span>
           <span className="font-display text-6xl leading-none font-extrabold tracking-tight">Online</span>
-          <span className="mt-2 text-lg">Private rooms with an invite link and cameras on both boards.</span>
-        </div>
+          <span className="mt-2 text-lg font-medium text-dim">Private rooms with an invite link. Live scores, camera and voice.</span>
+        </Link>
       </nav>
 
       <section aria-labelledby="recent" className="pb-4">

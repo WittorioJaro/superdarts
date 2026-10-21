@@ -73,16 +73,24 @@ What Superdarts does today and what's still to build. Update this file in the sa
 | Head-to-head (record, streak, side-by-side stats) | ✅ | |
 | Glicko-2 rating for 501 | ✅ | |
 | Rating history | ✅ | |
-| Groups ("The Darts Club") | 💤 | One implicit group today. Comes with invite links for online rooms |
 
-## Online and cameras (after everything above)
+## Online
 
 | Feature | Status | Notes |
 | --- | --- | --- |
-| Private online room with invite link | 💤 | Supabase Realtime for game state |
-| Live opponent scoreboard | 💤 | |
-| Works fully without cameras | 💤 | Manual scores always available |
-| Board camera and face camera, voice | 💤 | WebRTC, probably LiveKit |
+| Private online room with invite link and 4-letter code | ✅ | Supabase Realtime broadcast on a private channel; only room members receive it |
+| Lobby with who's here, host starts the game | ✅ | Up to 4 players. Host throws first; rematch rotates the order |
+| Live opponent scoreboard, every dart synced | ✅ | Server checks turn order. Each device only enters its own darts |
+| Reconnect and carry on, darts queued while offline | ✅ | |
+| Online games count for stats, ratings and replays | ✅ | Saved once the game ends, after a short window for undo |
+| Works fully without cameras | ✅ | |
+| Camera and voice in the room | 🚧 | Built, waiting on LiveKit keys in `.env.local` and Vercel. LiveKit Cloud, Frankfurt. Front or back camera; the thrower's camera fills the screen |
+| Groups ("The Darts Club") | 💤 | One implicit group today |
+
+## Cameras (after online)
+
+| Feature | Status | Notes |
+| --- | --- | --- |
 | Phone as camera: scan a QR code on the iPad, no second login | 💤 | |
 | Camera calibration (board centre, rings, perspective) | 💤 | Homography to board coordinates |
 | Dart detection by frame difference, tip position to score | 💤 | OpenCV first, small model if needed |

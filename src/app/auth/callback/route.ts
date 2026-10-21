@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { isEmailAllowed } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
@@ -16,5 +17,10 @@ export async function GET(request: Request) {
     return NextResponse.redirect(`${origin}/login?error=not_invited`);
   }
 
-  return NextResponse.redirect(`${origin}/`);
+  // Back to the page that sent them to sign in, e.g. a room invite. Same-site paths only.
+  const jar = await cookies();
+  const next = jar.get("sd_next")?.value;
+  jar.delete("sd_next");
+  const safe = next && next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\") ? next : "/";
+  return NextResponse.redirect(`${origin}${safe}`);
 }

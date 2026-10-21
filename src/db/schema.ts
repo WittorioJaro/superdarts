@@ -144,3 +144,34 @@ export const ratingChanges = pgTable("rating_changes", {
   rdAfter: real("rd_after").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [primaryKey({ columns: [t.gameId, t.playerId] }), index("rating_changes_player_idx").on(t.playerId)]).enableRLS();
+
+
+export const rooms = pgTable("rooms", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  code: text("code").notNull().unique(),
+  hostId: uuid("host_id").notNull().references(() => players.id),
+  status: text("status", { enum: ["lobby", "playing", "closed"] }).notNull().default("lobby"),
+  mode: text("mode", { enum: ["x01", "cricket"] }).notNull(),
+  config: jsonb("config").$type<import("@/lib/darts/modes").ConfigMap["x01" | "cricket"]>().notNull(),
+  ranked: boolean("ranked").notNull().default(false),
+  gameId: uuid("game_id"),
+  gameStartedAt: timestamp("game_started_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [index("rooms_updated_at_idx").on(t.updatedAt)]).enableRLS();
+
+export const roomPlayers = pgTable("room_players", {
+  roomId: uuid("room_id").notNull().references(() => rooms.id, { onDelete: "cascade" }),
+  playerId: uuid("player_id").notNull().references(() => players.id),
+  position: smallint("position").notNull(),
+  joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [primaryKey({ columns: [t.roomId, t.playerId] }), index("room_players_player_idx").on(t.playerId)]).enableRLS();
+
+export const roomDarts = pgTable("room_darts", {
+  roomId: uuid("room_id").notNull().references(() => rooms.id, { onDelete: "cascade" }),
+  gameId: uuid("game_id").notNull(),
+  seq: integer("seq").notNull(),
+  playerId: uuid("player_id").notNull().references(() => players.id),
+  dart: jsonb("dart").$type<import("@/lib/darts/board").Dart>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [primaryKey({ columns: [t.roomId, t.gameId, t.seq] })]).enableRLS();

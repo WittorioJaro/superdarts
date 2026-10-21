@@ -255,7 +255,7 @@ function Play({ game }: { game: ActiveGame }) {
   );
 }
 
-function Board({ game, state }: { game: ActiveGame; state: AnyState }) {
+export function Board({ game, state }: { game: ActiveGame; state: AnyState }) {
   switch (game.mode) {
     case "x01":
       return <X01Board state={state as StateMap["x01"]} config={game.config as X01Config} players={game.players} />;
@@ -281,7 +281,7 @@ function Board({ game, state }: { game: ActiveGame; state: AnyState }) {
 }
 
 /** Which keys to outline, and the one-tap "hit" key for drills with a single target. */
-function aimFor(game: ActiveGame, state: AnyState): { targets: number[]; quick: Dart | null } {
+export function aimFor(game: ActiveGame, state: AnyState): { targets: number[]; quick: Dart | null } {
   switch (game.mode) {
     case "x01": {
       const s = state as StateMap["x01"];
@@ -329,7 +329,7 @@ function aimFor(game: ActiveGame, state: AnyState): { targets: number[]; quick: 
   }
 }
 
-function headerDetail(game: ActiveGame, state: AnyState) {
+export function headerDetail(game: ActiveGame, state: AnyState) {
   const config = game.config as unknown as Record<string, unknown>;
   if (game.mode === "x01" && game.kind === "match") {
     const s = state as StateMap["x01"];
@@ -355,7 +355,7 @@ function freshConfig(game: ActiveGame) {
   return game.config;
 }
 
-function Flash({ event, game }: { event: GameEvent; game: ActiveGame }) {
+export function Flash({ event, game }: { event: GameEvent; game: ActiveGame }) {
   const name = game.players[event.player]?.name.split(" ")[0] ?? "";
   const content: Record<GameEvent["type"], { text: string; tone: string } | null> = {
     max: { text: game.mode === "shanghai" ? "Shanghai!" : game.mode === "cricket" ? "9 marks" : "180", tone: "text-brass" },
