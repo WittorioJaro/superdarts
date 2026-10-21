@@ -84,14 +84,19 @@ What Superdarts does today and what's still to build. Update this file in the sa
 | Reconnect and carry on, darts queued while offline | ✅ | |
 | Online games count for stats, ratings and replays | ✅ | Saved once the game ends, after a short window for undo |
 | Works fully without cameras | ✅ | |
-| Camera and voice in the room | 🚧 | Built, waiting on LiveKit keys in `.env.local` and Vercel. LiveKit Cloud, Frankfurt. Front or back camera; the thrower's camera fills the screen |
+| App-like touch: no rubber-band scrolling, no accidental zoom | ✅ | Only the page area scrolls, and only when it's taller than the screen |
+| Camera and voice in the room | ✅ | LiveKit Cloud, Frankfurt. The thrower's camera fills the screen |
+| Phone as the board camera: scan a QR code on the iPad, no second login | ✅ | The iPad never uses its own camera. Link lasts 12 hours; screen stays awake |
+| Choose the microphone: iPad, iPhone or off | ✅ | Your own phone's mic is never played back on your iPad |
+| Online now: friends with the app open, and what they're doing | ✅ | Home screen row. One tap sends an invite to a new room |
+| Room invites pop up on any screen | ✅ | Join or Not now. Also inviteable from the lobby |
+| Copy link and share in the room | ✅ | Also in the in-game Leave menu |
 | Groups ("The Darts Club") | 💤 | One implicit group today |
 
 ## Cameras (after online)
 
 | Feature | Status | Notes |
 | --- | --- | --- |
-| Phone as camera: scan a QR code on the iPad, no second login | 💤 | |
 | Camera calibration (board centre, rings, perspective) | 💤 | Homography to board coordinates |
 | Dart detection by frame difference, tip position to score | 💤 | OpenCV first, small model if needed |
 | Confidence-based scoring: automatic, assisted (tap to confirm), manual | 💤 | Quick correction buttons for near segments |

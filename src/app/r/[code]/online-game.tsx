@@ -62,6 +62,7 @@ export function OnlineGame({ conn, me }: { conn: RoomConnection; me: GamePlayer 
   const flash = ev && ev.type !== "hit" && ev.type !== "match" ? ev : null;
 
   const [menu, setMenu] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [entry, setEntry] = useState<"darts" | "total">(() => (game.mode === "x01" ? gameStore.prefs("entry", "darts") : "darts"));
   const [busy, startBusy] = useTransition();
   const [doing, setDoing] = useState<"rematch" | "leave" | "close" | null>(null);
@@ -133,7 +134,7 @@ export function OnlineGame({ conn, me }: { conn: RoomConnection; me: GamePlayer 
   }
 
   return (
-    <main className="safe-top safe-bottom fixed inset-0 flex flex-col gap-3 px-3 sm:px-4">
+    <main className="locked safe-top safe-bottom fixed inset-0 flex flex-col gap-3 px-3 sm:px-4">
       <header className="flex h-12 shrink-0 items-center justify-between gap-3">
         <button
           type="button"
@@ -221,6 +222,18 @@ export function OnlineGame({ conn, me }: { conn: RoomConnection; me: GamePlayer 
           </p>
           <button type="button" onClick={() => router.push("/online")} className="h-16 w-full rounded-2xl bg-chalk font-display text-2xl font-bold text-ink">
             Leave for now
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              void navigator.clipboard.writeText(`${window.location.origin}/r/${room.code}`).then(() => {
+                setLinkCopied(true);
+                setTimeout(() => setLinkCopied(false), 2000);
+              })
+            }
+            className="h-14 w-full rounded-2xl bg-felt font-semibold hover:bg-wire"
+          >
+            {linkCopied ? "Copied" : `Copy room link (${room.code})`}
           </button>
           {room.hostId === me.id && (
             <button

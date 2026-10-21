@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useSyncExternalStore, useTransition } from "react";
 import { closeRoom, joinRoom, leaveRoom, startRoom } from "@/app/online-actions";
 import { MediaControls, VideoTile, useVideoOn, RoomVideo } from "@/components/room-video";
+import { InviteFriends } from "@/components/friends";
 import { Avatar, BackLink } from "@/components/ui";
 import { gameDetail, gameTitle } from "@/lib/darts/labels";
 import type { GamePlayer } from "@/lib/game-store";
@@ -23,7 +24,7 @@ function MemberRoom({ initial, me }: { initial: RoomSnapshot; me: GamePlayer }) 
   const conn = useRoom(initial, me.id);
   const { room } = conn;
   return (
-    <RoomVideo roomId={room.id}>
+    <RoomVideo roomId={room.id} meId={me.id}>
       {room.status === "closed" ? (
         <Closed room={room} />
       ) : room.status === "lobby" || !room.game ? (
@@ -155,20 +156,31 @@ function Lobby({ conn, me }: { conn: RoomConnection; me: GamePlayer }) {
     });
   }
 
-  async function share() {
-    const data = { title: "Superdarts", text: `Darts? Join my room: ${room.code}`, url: link };
-    if (navigator.share) {
-      try {
-        await navigator.share(data);
-        return;
-      } catch {
-        // Cancelled, or not allowed here; fall back to copying.
-      }
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch {
+      // Older iPadOS without clipboard permission: select the text so it can be copied by hand.
+      document.getElementById("room-link")?.focus();
+      return;
     }
-    await navigator.clipboard.writeText(link);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
+
+  async function share() {
+    try {
+      await navigator.share({ title: "Superdarts", text: `Darts? Join my room ${room.code}`, url: link });
+    } catch {
+      // Cancelled.
+    }
+  }
+
+  const canShare = useSyncExternalStore(
+    noop,
+    () => typeof navigator.share === "function",
+    () => false,
+  );
 
   const slots = Array.from({ length: Math.max(2, Math.min(MAX_PLAYERS, room.players.length + 1)) }, (_, i) => room.players[i] ?? null);
 
@@ -180,17 +192,36 @@ function Lobby({ conn, me }: { conn: RoomConnection; me: GamePlayer }) {
             <h2 id="invite" className="text-sm font-medium text-dim">
               Room code
             </h2>
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <span className="font-display text-7xl leading-none font-extrabold tracking-[0.18em]">{room.code}</span>
+            <span className="font-display text-7xl leading-none font-extrabold tracking-[0.18em]">{room.code}</span>
+            <div className="flex gap-2">
+              <input
+                id="room-link"
+                readOnly
+                value={link}
+                onFocus={(e) => e.currentTarget.select()}
+                aria-label="Invite link"
+                className="h-14 min-w-0 flex-1 rounded-2xl border border-wire bg-ink px-4 text-dim outline-none focus:border-chalk"
+              />
               <button
                 type="button"
-                onClick={() => void share()}
-                className="h-14 rounded-2xl bg-chalk px-6 font-display text-xl font-bold text-ink transition active:scale-[0.98]"
+                onClick={() => void copy()}
+                className={`h-14 shrink-0 rounded-2xl px-5 font-display text-xl font-bold transition active:scale-[0.98] ${copied ? "bg-treble text-ink" : "bg-chalk text-ink"}`}
               >
-                {copied ? "Link copied" : "Send invite"}
+                {copied ? "Copied" : "Copy link"}
               </button>
+              {canShare && (
+                <button
+                  type="button"
+                  onClick={() => void share()}
+                  aria-label="Share invite"
+                  className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-felt text-chalk transition hover:bg-wire active:scale-[0.98]"
+                >
+                  <svg aria-hidden width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 3v12M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" />
+                  </svg>
+                </button>
+              )}
             </div>
-            <p className="truncate text-dim">{link}</p>
           </section>
 
           <section aria-labelledby="players" className="flex flex-col gap-3">
@@ -220,6 +251,8 @@ function Lobby({ conn, me }: { conn: RoomConnection; me: GamePlayer }) {
               )}
             </ul>
           </section>
+
+          {room.players.length < MAX_PLAYERS && <InviteFriends roomId={room.id} exclude={room.players.map((p) => p.id)} />}
         </div>
 
         <section aria-labelledby="game" className="flex flex-col gap-5">
@@ -228,7 +261,8 @@ function Lobby({ conn, me }: { conn: RoomConnection; me: GamePlayer }) {
               <VideoTile player={me} self className="aspect-video w-full" />
               <MediaControls />
               <p className="text-sm text-dim">
-                Point the camera at your board so your friends can watch you throw. On the iPad, &ldquo;Switch&rdquo; uses the back camera.
+                Friends see your board through your phone: tap &ldquo;Add camera&rdquo; and scan the code. Your voice goes through the iPad unless you pick the
+                iPhone.
               </p>
             </div>
           ) : (

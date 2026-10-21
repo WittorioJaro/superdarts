@@ -1,5 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { Barlow, Barlow_Condensed } from "next/font/google";
+import { FriendsProvider } from "@/components/friends";
+import { NoZoom } from "@/components/no-zoom";
+import { getSignedInPlayer } from "@/lib/auth";
 import "./globals.css";
 
 const barlow = Barlow({
@@ -32,10 +35,20 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  const me = await getSignedInPlayer();
   return (
     <html lang="en" className={`${barlow.variable} ${barlowCondensed.variable} h-full antialiased`}>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body>
+        <div id="app" className="flex flex-col">
+          {me ? (
+            <FriendsProvider me={{ id: me.id, name: me.name, color: me.color, avatarUrl: me.avatarUrl }}>{children}</FriendsProvider>
+          ) : (
+            children
+          )}
+        </div>
+        <NoZoom />
+      </body>
     </html>
   );
 }

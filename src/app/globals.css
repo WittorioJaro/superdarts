@@ -19,6 +19,14 @@
   --font-display: var(--font-barlow-condensed), ui-sans-serif, system-ui, sans-serif;
 
   --animate-pop: pop 1.4s cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
+  --animate-drop: drop 0.35s cubic-bezier(0.2, 0.9, 0.3, 1);
+
+  @keyframes drop {
+    from {
+      opacity: 0;
+      transform: translateY(-1.5rem);
+    }
+  }
 
   @keyframes pop {
     0% {
@@ -41,6 +49,18 @@
   }
 }
 
+/*
+ * Feel like an app, not a web page: the document itself never moves, so iOS
+ * can't rubber-band it. Only #app scrolls, and only when its page is taller
+ * than the screen; even then it stops dead at the ends.
+ */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 html {
   background: var(--color-ink);
   color: var(--color-chalk);
@@ -51,6 +71,27 @@ html {
 body {
   font-family: var(--font-sans);
   font-feature-settings: "tnum" 1;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+#app {
+  height: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: none;
+}
+
+input,
+textarea {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Screens that always fit, like the scorer: no panning at all, taps still work. */
+.locked {
+  touch-action: none;
   overscroll-behavior: none;
 }
 

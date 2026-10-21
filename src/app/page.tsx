@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { BoardMark } from "@/components/board-mark";
+import { OnlineFriends } from "@/components/friends";
 import { RecentGames } from "@/components/recent-games";
 import { ResumeBanner } from "@/components/resume-banner";
 import { SyncPending } from "@/components/sync-pending";
@@ -27,6 +28,7 @@ export default async function Home() {
         </Link>
       </header>
 
+      <OnlineFriends />
       <SyncPending />
       <ResumeBanner />
 

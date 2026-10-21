@@ -166,7 +166,7 @@ function Play({ game }: { game: ActiveGame }) {
   }
 
   return (
-    <main className="safe-top safe-bottom fixed inset-0 flex flex-col gap-3 px-3 sm:px-4">
+    <main className="locked safe-top safe-bottom fixed inset-0 flex flex-col gap-3 px-3 sm:px-4">
       <header className="flex h-12 shrink-0 items-center justify-between gap-3">
         <button
           type="button"

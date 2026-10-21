@@ -1,17 +1,20 @@
 "use server";
 
 import { randomInt, randomUUID } from "node:crypto";
-import { and, asc, eq } from "drizzle-orm";
-import { AccessToken } from "livekit-server-sdk";
+import { and, asc, eq, sql } from "drizzle-orm";
+import { AccessToken, TrackSource } from "livekit-server-sdk";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
-import { games, roomDarts, roomPlayers, rooms } from "@/db/schema";
+import { games, players, roomDarts, roomPlayers, rooms } from "@/db/schema";
 import { getCurrentPlayer } from "@/lib/auth";
+import { signCameraToken, verifyCameraToken } from "@/lib/camera-token";
 import type { Dart } from "@/lib/darts/board";
+import { gameDetail, gameTitle } from "@/lib/darts/labels";
 import { replay } from "@/lib/darts/modes";
 import { isGameFinished, rotate, turnOf } from "@/lib/darts/rooms";
 import { configSchemas, dartSchema } from "@/lib/darts/schemas";
+import { cameraIdentity, type CameraLink, type CameraSession, type RoomInvite } from "@/lib/friends-types";
 import { persistGame, type GameTransaction } from "@/lib/persist-game";
 import { getRoomSnapshot } from "@/lib/rooms";
 import type { RoomActionResult, RoomSettings, RoomSnapshot } from "@/lib/rooms-types";
@@ -243,7 +246,71 @@ export async function videoToken(roomId: string): Promise<RoomActionResult<{ url
     const url = process.env.LIVEKIT_URL, key = process.env.LIVEKIT_API_KEY, secret = process.env.LIVEKIT_API_SECRET;
     if (!url || !key || !secret) return { ok: false, error: "video_unavailable" };
     const token = new AccessToken(key, secret, { identity: me.id, name: me.name, metadata: JSON.stringify({ color: me.color }), ttl: "6h" });
-    token.addGrant({ roomJoin: true, room: `superdarts-${roomId}`, canPublish: true, canSubscribe: true, canPublishData: true });
+    token.addGrant({ roomJoin: true, room: `superdarts-${roomId}`, canPublish: true, canPublishSources: [TrackSource.MICROPHONE],
+      canSubscribe: true, canPublishData: true, canUpdateOwnMetadata: true });
     return { ok: true, url, token: await token.toJwt() };
+  });
+}
+
+const inviteTimes = new Map<string, number>();
+
+export async function invitePlayer(roomId: string, playerId: string): Promise<RoomActionResult> {
+  const me = await getCurrentPlayer();
+  if (!idSchema.safeParse(playerId).success) return { ok: false, error: "Invalid player." };
+  return withRoom(roomId, me.id, async (tx, room, members) => {
+    requireRoom(room.status === "lobby", "You can only invite players to a lobby.");
+    requireRoom(playerId !== me.id, "You can't invite yourself.");
+    requireRoom(!members.some((p) => p.playerId === playerId), "That player is already in the room.");
+    const [target] = await tx.select().from(players).where(eq(players.id, playerId));
+    requireRoom(target && !target.bot && target.userId, "That player can't receive invites.");
+    const now = Date.now(), pair = `${me.id}:${playerId}`;
+    for (const [key, sentAt] of inviteTimes) if (now - sentAt >= 5000) inviteTimes.delete(key);
+    requireRoom(!inviteTimes.has(pair), "Please wait a few seconds before inviting that player again.");
+    const invite: RoomInvite = { id: randomUUID(), code: room.code,
+      from: { id: me.id, name: me.name, color: me.color, avatarUrl: me.avatarUrl },
+      title: `${gameTitle(room.mode, { ...room.config })}, ${gameDetail(room.mode, { ...room.config }).toLowerCase()}`, sentAt: now };
+    // Reserve before awaiting SQL so concurrent invites from another room share the limit.
+    inviteTimes.set(pair, now);
+    try {
+      await tx.execute(sql`select realtime.send(${JSON.stringify(invite)}::jsonb, 'invite', ${`player:${playerId}`}, true)`);
+    } catch (error) {
+      if (inviteTimes.get(pair) === now) inviteTimes.delete(pair);
+      throw error;
+    }
+    return { ok: true };
+  });
+}
+
+export async function cameraLink(roomId: string): Promise<RoomActionResult<CameraLink>> {
+  const me = await getCurrentPlayer();
+  return withRoom<CameraLink>(roomId, me.id, async (_tx, room) => {
+    requireRoom(room.status !== "closed", "The room has closed.");
+    const url = process.env.LIVEKIT_URL, key = process.env.LIVEKIT_API_KEY, secret = process.env.LIVEKIT_API_SECRET;
+    if (!url || !key || !secret) return { ok: false, error: "video_unavailable" };
+    const expiry = Math.floor(Date.now() / 1000) + 12 * 60 * 60;
+    const token = signCameraToken({ r: room.id, p: me.id, e: expiry }, secret);
+    return { ok: true, path: `/cam/${token}`, expiresAt: new Date(expiry * 1000).toISOString() };
+  });
+}
+
+/** This bearer link is the phone's authorization; it deliberately needs no signed-in session. */
+export async function cameraToken(token: string): Promise<RoomActionResult<CameraSession>> {
+  const url = process.env.LIVEKIT_URL, key = process.env.LIVEKIT_API_KEY, secret = process.env.LIVEKIT_API_SECRET;
+  if (!url || !key || !secret) return { ok: false, error: "video_unavailable" };
+  const verified = verifyCameraToken(token, secret);
+  if (!verified.ok) return { ok: false, error: verified.error === "expired"
+    ? "This camera link has expired. Make a new one on the iPad." : "This camera link is invalid. Make a new one on the iPad." };
+  const { r: roomId, p: playerId } = verified.payload;
+  return withRoom<CameraSession>(roomId, playerId, async (tx, room) => {
+    requireRoom(room.status !== "closed", "The room has closed.");
+    const [player] = await tx.select().from(players).where(eq(players.id, playerId));
+    requireRoom(player, "This player is no longer in the room. Make a new camera link on the iPad.");
+    const access = new AccessToken(key, secret, { identity: cameraIdentity(playerId), name: `${player.name}'s camera`,
+      metadata: JSON.stringify({ color: player.color, camera: true }), ttl: "6h" });
+    access.addGrant({ roomJoin: true, room: `superdarts-${roomId}`, canPublish: true,
+      // Subscribe is granted so the phone sees the iPad's `mic` attribute; it connects with autoSubscribe off, so no media flows to it.
+      canPublishSources: [TrackSource.CAMERA, TrackSource.MICROPHONE], canSubscribe: true, canPublishData: false });
+    return { ok: true, url, token: await access.toJwt(), roomCode: room.code,
+      player: { id: player.id, name: player.name, color: player.color, avatarUrl: player.avatarUrl } };
   });
 }

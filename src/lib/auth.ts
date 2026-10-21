@@ -37,3 +37,11 @@ export const getCurrentPlayer = cache(async (): Promise<Player> => {
     .returning();
   return created;
 });
+
+/** Like getCurrentPlayer, but null instead of redirecting. For the root layout, which also renders the login page. */
+export const getSignedInPlayer = cache(async (): Promise<Player | null> => {
+  const supabase = await createClient();
+  const { data } = await supabase.auth.getClaims();
+  if (!data?.claims?.sub || !isEmailAllowed(data.claims.email)) return null;
+  return getCurrentPlayer();
+});
