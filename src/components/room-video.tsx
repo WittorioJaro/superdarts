@@ -13,10 +13,11 @@ import {
 import { Track } from "livekit-client";
 import { type ReactNode, createContext, useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { renderSVG } from "uqr";
-import { cameraLink, videoToken } from "@/app/online-actions";
+import { cameraLink, soloCameraLink, soloVideoToken, videoToken } from "@/app/online-actions";
 import { Avatar, Sheet } from "@/components/ui";
-import { MIC_ATTRIBUTE, type MicSource, cameraIdentity, identityPlayer } from "@/lib/friends-types";
+import { type CameraLink, MIC_ATTRIBUTE, type MicSource, cameraIdentity, identityPlayer } from "@/lib/friends-types";
 import { type GamePlayer, gameStore } from "@/lib/game-store";
+import type { RoomActionResult } from "@/lib/rooms-types";
 
 /**
  * Camera and voice for a room, through LiveKit. The camera is a phone pointed
@@ -25,21 +26,59 @@ import { type GamePlayer, gameStore } from "@/lib/game-store";
  * room works the same.
  */
 
-type Ctx = { on: boolean; roomId: string; meId: string };
-const Video = createContext<Ctx>({ on: false, roomId: "", meId: "" });
+type Creds = RoomActionResult<{ url: string; token: string }>;
+type Ctx = { on: boolean; meId: string; voice: boolean; link: () => Promise<RoomActionResult<CameraLink>> };
+const Video = createContext<Ctx>({ on: false, meId: "", voice: false, link: async () => ({ ok: false, error: "video_unavailable" }) });
 
 export function RoomVideo({ roomId, meId, children }: { roomId: string; meId: string; children: ReactNode }) {
+  return (
+    <LiveVideo meId={meId} voice credentials={() => videoToken(roomId)} link={() => cameraLink(roomId)} keyed={roomId}>
+      {children}
+    </LiveVideo>
+  );
+}
+
+/** A local game's own LiveKit room, just for this player's phone camera: no voice, nobody else. */
+export function SoloVideo({ meId, enabled, children }: { meId: string; enabled: boolean; children: ReactNode }) {
+  return (
+    <LiveVideo meId={meId} voice={false} credentials={soloVideoToken} link={soloCameraLink} keyed={enabled ? meId : ""}>
+      {children}
+    </LiveVideo>
+  );
+}
+
+function LiveVideo({
+  meId,
+  voice,
+  credentials,
+  link,
+  keyed,
+  children,
+}: {
+  meId: string;
+  voice: boolean;
+  credentials: () => Promise<Creds>;
+  link: Ctx["link"];
+  /** Fetches new credentials when this changes. */
+  keyed: string;
+  children: ReactNode;
+}) {
   const [creds, setCreds] = useState<{ url: string; token: string } | null>(null);
 
   useEffect(() => {
+    // An empty key means "not now": stay disconnected and don't ask for a token.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (!keyed) return setCreds(null);
     let live = true;
-    videoToken(roomId)
+    credentials()
       .then((r) => live && r.ok && setCreds({ url: r.url, token: r.token }))
       .catch(() => {});
     return () => {
       live = false;
     };
-  }, [roomId]);
+    // `credentials` is a fresh closure each render; `keyed` says when it means something new.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keyed]);
 
   // Always rendered, so the room's UI doesn't remount when the token arrives.
   return (
@@ -52,10 +91,10 @@ export function RoomVideo({ roomId, meId, children }: { roomId: string; meId: st
       options={{ adaptiveStream: true, dynacast: true, audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }}
       className="contents"
     >
-      <Video.Provider value={{ on: !!creds, roomId, meId }}>
+      <Video.Provider value={{ on: !!creds, meId, voice, link }}>
         {children}
-        {creds && <Voices meId={meId} />}
-        {creds && <MicSync />}
+        {creds && voice && <Voices meId={meId} />}
+        {creds && voice && <MicSync />}
       </Video.Provider>
     </LiveKitRoom>
   );
@@ -91,7 +130,7 @@ function setMicSource(m: MicSource) {
 }
 
 /** Whether my phone is in the room as my camera. */
-function useMyPhone() {
+export function useMyPhone() {
   const { meId } = useContext(Video);
   const participants = useParticipants();
   return participants.some((p) => p.identity === cameraIdentity(meId));
@@ -128,7 +167,7 @@ function Controls({ compact }: { compact: boolean }) {
   const { isMicrophoneEnabled } = useLocalParticipant();
   const source = useMicSource();
   const phone = useMyPhone();
-  const { meId } = useContext(Video);
+  const { meId, voice } = useContext(Video);
   // The phone being in the room isn't enough: it may still be asking for camera permission, or have none.
   const picture = !!useCamera(meId);
   const [camOpen, setCamOpen] = useState(false);
@@ -145,15 +184,17 @@ function Controls({ compact }: { compact: boolean }) {
           Tap for sound
         </button>
       )}
-      <button
-        type="button"
-        onClick={() => setMicOpen(true)}
-        aria-label={`Microphone: ${micLabel}`}
-        className={`${btn} ${micLive ? "bg-chalk text-ink" : "bg-cabinet text-dim hover:text-chalk"}`}
-      >
-        <MicIcon off={!micLive} />
-        {!compact && <span>{micLabel}</span>}
-      </button>
+      {voice && (
+        <button
+          type="button"
+          onClick={() => setMicOpen(true)}
+          aria-label={`Microphone: ${micLabel}`}
+          className={`${btn} ${micLive ? "bg-chalk text-ink" : "bg-cabinet text-dim hover:text-chalk"}`}
+        >
+          <MicIcon off={!micLive} />
+          {!compact && <span>{micLabel}</span>}
+        </button>
+      )}
       <button
         type="button"
         onClick={() => setCamOpen(true)}
@@ -217,15 +258,15 @@ function MicPicker({ phone, onDone }: { phone: boolean; onDone: () => void }) {
 }
 
 /** QR code for the phone. Scanning it joins the room as this player's camera, no sign-in. */
-function CameraPairing({ phone, picture, onDone }: { phone: boolean; picture: boolean; onDone: () => void }) {
-  const { roomId } = useContext(Video);
+export function CameraPairing({ phone, picture, onDone }: { phone: boolean; picture: boolean; onDone: () => void }) {
+  const { link: makeLink } = useContext(Video);
   const [link, setLink] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     let live = true;
-    cameraLink(roomId)
+    makeLink()
       .then((r) => {
         if (!live) return;
         if (r.ok) setLink(`${window.location.origin}${r.path}`);
@@ -235,7 +276,9 @@ function CameraPairing({ phone, picture, onDone }: { phone: boolean; picture: bo
     return () => {
       live = false;
     };
-  }, [roomId]);
+    // Made once per opening of the sheet.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (phone) {
     return (

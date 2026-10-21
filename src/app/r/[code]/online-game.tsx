@@ -1,11 +1,13 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { closeRoom, finishRoomGame, rematchRoom } from "@/app/online-actions";
+import { useCameraScoring } from "@/components/camera-scoring";
 import { Pad, TotalPad } from "@/components/pad";
 import { MediaControls, VideoStrip, VideoTile, useHasCamera } from "@/components/room-video";
 import { Sheet } from "@/components/ui";
+import { VisitTray } from "@/components/visit-tray";
 import { isCheckoutPossible } from "@/lib/darts/checkout";
 import { type Dart, visitTotal } from "@/lib/darts/board";
 import { gameTitle } from "@/lib/darts/labels";
@@ -50,6 +52,14 @@ export function OnlineGame({ conn, me }: { conn: RoomConnection; me: GamePlayer 
     return turnOf(game.mode, game.config as never, players.length, game.darts.slice(0, -1));
   }, [game, players.length]);
   const canUndo = !live.saved && lastBy === myIndex;
+
+  // The phone on my board fills the tray; darts only go to the server once I confirm the visit.
+  const { throwDart } = conn;
+  const cam = useCameraScoring(me.id, useCallback((ds: Dart[]) => ds.forEach(throwDart), [throwDart]));
+  const clearTray = cam.tray.clear;
+  useEffect(() => {
+    if (!myTurn) clearTray();
+  }, [myTurn, clearTray]);
 
   // Big "180" / "Bust" calls for everyone's darts, but not when one is taken back.
   const [seen, setSeen] = useState(game.darts.length);
@@ -128,7 +138,8 @@ export function OnlineGame({ conn, me }: { conn: RoomConnection; me: GamePlayer 
   const config = game.config as unknown as Record<string, unknown>;
   const { targets, quick } = aimFor(game, state);
   const visitOpen = state.open !== null && state.turns[state.open].darts.length > 0;
-  const useTotals = myTurn && game.mode === "x01" && entry === "total" && !visitOpen;
+  const camera = myTurn && cam.active;
+  const useTotals = myTurn && game.mode === "x01" && entry === "total" && !visitOpen && !camera;
 
   function switchEntry(next: "darts" | "total") {
     setEntry(next);
@@ -155,7 +166,7 @@ export function OnlineGame({ conn, me }: { conn: RoomConnection; me: GamePlayer 
         <div className="flex shrink-0 items-center gap-2">
           <SyncState conn={conn} />
           <MediaControls compact />
-          {game.mode === "x01" && (
+          {game.mode === "x01" && !camera && (
             <div className="flex rounded-xl bg-cabinet p-1" role="group" aria-label="Enter scores as">
               {(["darts", "total"] as const).map((e) => (
                 <button
@@ -197,6 +208,19 @@ export function OnlineGame({ conn, me }: { conn: RoomConnection; me: GamePlayer 
                     onUndo={conn.undo}
                     canUndo={canUndo}
                   />
+                ) : camera ? (
+                  <div className="flex h-full flex-col gap-2">
+                    <VisitTray tray={cam.tray} game={game} watching={!!cam.status?.calibrated} onConfirm={cam.confirm} />
+                    <div className="min-h-0 flex-1">
+                      <Pad
+                        onDart={cam.tray.pad}
+                        onUndo={() => cam.undo(conn.undo)}
+                        canUndo={cam.tray.darts.length > 0 || canUndo}
+                        targets={targets}
+                        quick={quick}
+                      />
+                    </div>
+                  </div>
                 ) : (
                   <Pad onDart={(d: Dart) => conn.throwDart(d)} onUndo={conn.undo} canUndo={canUndo} targets={targets} quick={quick} />
                 )}

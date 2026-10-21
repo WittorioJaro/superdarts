@@ -3,8 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { CameraButton, useCameraScoring } from "@/components/camera-scoring";
+import { useMe } from "@/components/me";
 import { Pad, TotalPad } from "@/components/pad";
+import { SoloVideo } from "@/components/room-video";
 import { Sheet } from "@/components/ui";
+import { VisitTray } from "@/components/visit-tray";
 import { type BotModel, botDart } from "@/lib/darts/bot";
 import { isCheckoutPossible } from "@/lib/darts/checkout";
 import { type Dart, visitTotal } from "@/lib/darts/board";
@@ -39,6 +43,9 @@ function useHydrated() {
 export function Counter() {
   const game = useActiveGame();
   const hydrated = useHydrated();
+  const me = useMe();
+  // Runs again on the client, where the preference lives; the server render is empty anyway.
+  const [camera, setCamera] = useState(() => gameStore.prefs("camera-scoring", false));
   if (!hydrated) return null;
   if (!game) {
     return (
@@ -51,7 +58,23 @@ export function Counter() {
       </main>
     );
   }
-  return <Play key={game.id} game={game} />;
+  if (!me) return <Play key={game.id} game={game} camera={null} />;
+  return (
+    <SoloVideo meId={me.id} enabled={camera}>
+      <Play
+        key={game.id}
+        game={game}
+        camera={{
+          meId: me.id,
+          enabled: camera,
+          set: (on) => {
+            setCamera(on);
+            gameStore.setPref("camera-scoring", on);
+          },
+        }}
+      />
+    </SoloVideo>
+  );
 }
 
 function rebuild(game: ActiveGame): AnyState {
@@ -67,7 +90,9 @@ function botAt(game: ActiveGame, i: number) {
 
 const BOT_PACE = 650;
 
-function Play({ game }: { game: ActiveGame }) {
+type CameraSetting = { meId: string; enabled: boolean; set: (on: boolean) => void };
+
+function Play({ game, camera }: { game: ActiveGame; camera: CameraSetting | null }) {
   const router = useRouter();
   const state = useMemo(() => rebuild(game), [game]);
   const [flash, setFlash] = useState<{ key: number; event: GameEvent } | null>(null);
@@ -86,6 +111,26 @@ function Play({ game }: { game: ActiveGame }) {
     },
     [game, state.finished],
   );
+
+  // A confirmed visit goes in as one write. Each dart still gets its own time stamp, and the
+  // biggest call (bust, 180, leg) is flashed once.
+  const throwDarts = useCallback(
+    (ds: Dart[]) => {
+      let next = game;
+      let event: GameEvent | null = null;
+      for (const d of ds) {
+        if (rebuild(next).finished) break;
+        next = { ...next, darts: [...next.darts, { ...d, t: Date.now() }] };
+        const ev = rebuild(next).event;
+        if (ev && ev.type !== "hit" && ev.type !== "match") event = ev;
+      }
+      if (next === game) return;
+      gameStore.setActive(next);
+      if (event) setFlash({ key: next.darts.length, event });
+    },
+    [game],
+  );
+  const cam = useCameraScoring(camera?.meId ?? "", throwDarts);
 
   // Undo goes back to the last dart a person threw, taking any bot visit with it.
   const undo = useCallback(() => {
@@ -158,7 +203,8 @@ function Play({ game }: { game: ActiveGame }) {
   const { targets, quick } = aimFor(game, state);
   // Totals are entered a whole visit at a time, so the switch only works between visits.
   const visitOpen = state.open !== null && state.turns[state.open].darts.length > 0;
-  const useTotals = game.mode === "x01" && entry === "total" && !visitOpen;
+  // Camera darts are entered one by one, so the tray always uses the dart pad.
+  const useTotals = game.mode === "x01" && entry === "total" && !visitOpen && !cam.active;
 
   function switchEntry(next: "darts" | "total") {
     setEntry(next);
@@ -182,24 +228,34 @@ function Play({ game }: { game: ActiveGame }) {
           <span className="font-display text-2xl font-bold">{gameTitle(game.mode, config)}</span>
           <span className="ml-3 text-dim">{inPlan ? `Training ${inPlan.index + 1} of ${inPlan.steps.length}` : headerDetail(game, state)}</span>
         </p>
-        {game.mode === "x01" ? (
-          <div className="flex rounded-xl bg-cabinet p-1" role="group" aria-label="Enter scores as">
-            {(["darts", "total"] as const).map((e) => (
-              <button
-                key={e}
-                type="button"
-                aria-pressed={entry === e}
-                disabled={visitOpen && e === "total"}
-                onClick={() => switchEntry(e)}
-                className={`h-10 rounded-lg px-3 font-medium transition disabled:opacity-40 ${entry === e ? "bg-chalk text-ink" : "text-dim hover:text-chalk"}`}
-              >
-                {e === "darts" ? "Darts" : "Total"}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <span className="w-24" />
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {camera && (
+            <CameraButton
+              enabled={camera.enabled}
+              onEnabled={camera.set}
+              status={cam.status}
+              onReset={() => cam.send({ v: 1, kind: "reset" })}
+            />
+          )}
+          {game.mode === "x01" && !cam.active ? (
+            <div className="flex rounded-xl bg-cabinet p-1" role="group" aria-label="Enter scores as">
+              {(["darts", "total"] as const).map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  aria-pressed={entry === e}
+                  disabled={visitOpen && e === "total"}
+                  onClick={() => switchEntry(e)}
+                  className={`h-10 rounded-lg px-3 font-medium transition disabled:opacity-40 ${entry === e ? "bg-chalk text-ink" : "text-dim hover:text-chalk"}`}
+                >
+                  {e === "darts" ? "Darts" : "Total"}
+                </button>
+              ))}
+            </div>
+          ) : (
+            !camera && <span className="w-24" />
+          )}
+        </div>
       </header>
 
       <div className="grid min-h-0 flex-1 gap-3 portrait:grid-rows-[minmax(0,1fr)_minmax(0,1.15fr)] landscape:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -228,6 +284,19 @@ function Play({ game }: { game: ActiveGame }) {
               onUndo={undo}
               canUndo={game.darts.length > 0}
             />
+          ) : cam.active ? (
+            <div className="flex h-full flex-col gap-2">
+              <VisitTray tray={cam.tray} game={game} watching={!!cam.status?.calibrated} onConfirm={cam.confirm} />
+              <div className="min-h-0 flex-1">
+                <Pad
+                  onDart={cam.tray.pad}
+                  onUndo={() => cam.undo(undo)}
+                  canUndo={cam.tray.darts.length > 0 || game.darts.length > 0}
+                  targets={targets}
+                  quick={quick}
+                />
+              </div>
+            </div>
           ) : (
             <Pad onDart={throwDart} onUndo={undo} canUndo={game.darts.length > 0} targets={targets} quick={quick} />
           )}

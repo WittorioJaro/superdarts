@@ -93,12 +93,15 @@ What Superdarts does today and what's still to build. Update this file in the sa
 | Copy link and share in the room | ✅ | Also in the in-game Leave menu |
 | Groups ("The Darts Club") | 💤 | One implicit group today |
 
-## Cameras (after online)
+## Cameras
 
 | Feature | Status | Notes |
 | --- | --- | --- |
-| Camera calibration (board centre, rings, perspective) | 💤 | Homography to board coordinates |
-| Dart detection by frame difference, tip position to score | 💤 | OpenCV first, small model if needed |
-| Confidence-based scoring: automatic, assisted (tap to confirm), manual | 💤 | Quick correction buttons for near segments |
+| Camera calibration (board centre, rings, perspective) | ✅ | Five taps on the phone (four double-wire points and the bull), then the board is drawn over the picture to check. Saved per phone and resolution |
+| Dart detection by frame difference, tip position to score | ✅ | Runs on the phone, about 12 frames a second. Board-rectified frame difference, tip at the thin end of the dart. No trained model yet; the detector is behind an interface so one can drop in |
+| Assisted scoring: every visit is confirmed on the iPad | ✅ | Each dart shows the camera's pick plus the next likeliest scores as one-tap swaps. Tap a dart to fix it on the pad. Never submits on its own |
+| Learns from corrections | ✅ | A changed guess nudges a bounded per-phone offset, so a camera that reads high gets corrected over time |
+| Camera scoring in local games | ✅ | Phone pairs to a private LiveKit room; only darts are sent, the picture stays on the phone |
+| Fully automatic scoring (no confirm) | 💤 | Only once accuracy on real boards is measured |
 | Multiple cameras for occlusion | 💤 | |
 | Paid upgrades (hosted multiplayer, advanced camera scoring) | 💤 | Only if it ever goes beyond friends |
