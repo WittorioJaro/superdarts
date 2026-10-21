@@ -59,7 +59,7 @@ function Camera({ token }: { token: string }) {
   }
   if (!started) {
     return (
-      <Message title={`${session.player.name.split(" ")[0]}'s board camera`} body={`For room ${session.roomCode}. Friends will see what this phone sees.`}>
+      <Message title={`${session.player.name.split(" ")[0]}'s board camera`} body={session.roomCode ? `For room ${session.roomCode}. Friends will see what this phone sees.` : "For your local game."}>
         <button
           type="button"
           onClick={() => setStarted(true)}
@@ -181,7 +181,7 @@ function Live({ session }: { session: CameraSession }) {
           {live ? "Live" : state === ConnectionState.Reconnecting ? "Reconnecting…" : "Connecting…"}
         </span>
         <span className="rounded-full bg-ink/70 px-4 py-2 text-sm font-medium backdrop-blur">
-          Room {session.roomCode} · {session.player.name.split(" ")[0]}&apos;s board
+          {session.roomCode ? `Room ${session.roomCode}` : "Local game"} · {session.player.name.split(" ")[0]}&apos;s board
         </span>
       </div>
 
