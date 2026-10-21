@@ -40,3 +40,18 @@ describe("camera bearer tokens", () => {
     }
   });
 });
+
+describe("solo camera bearer tokens", () => {
+  const solo = { k: "solo" as const, p: payload.p, e: payload.e };
+  it("roundtrips solo claims without changing legacy room claims", () => {
+    expect(verifyCameraToken(signCameraToken(solo, secret), secret, 1000)).toEqual({ ok: true, payload: solo });
+    expect(verifyCameraToken(signCameraToken(payload, secret), secret, 1000)).toEqual({ ok: true, payload });
+    expect(verifyCameraToken(signCameraToken(solo, secret), secret, 2000)).toEqual({ ok: false, error: "expired" });
+  });
+  it("rejects unknown kinds, conflicting room claims and malformed player IDs", () => {
+    for (const claims of [{ ...solo, k: "unknown" }, { ...solo, r: payload.r }, { ...solo, p: "bad" }, { p: payload.p, e: 2000 }]) {
+      const token = signCameraToken(claims as Parameters<typeof signCameraToken>[0], secret);
+      expect(verifyCameraToken(token, secret, 1000)).toEqual({ ok: false, error: "invalid" });
+    }
+  });
+});
