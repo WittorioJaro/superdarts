@@ -14,7 +14,7 @@ describe("previewVisit", () => {
   it("applies a full visit and reports what's left", () => {
     const p = previewVisit(game([]), [T20, T20, T20]);
     expect(p.applied).toBe(3);
-    expect(p.turn?.startScore! - p.turn!.points).toBe(321);
+    expect(p.turn!.startScore! - p.turn!.points).toBe(321);
   });
 
   it("stops at a bust, so later darts never count for the next player", () => {
