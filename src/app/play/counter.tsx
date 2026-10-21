@@ -7,6 +7,7 @@ import { CameraButton, useCameraScoring } from "@/components/camera-scoring";
 import { useMe } from "@/components/me";
 import { Pad, TotalPad } from "@/components/pad";
 import { SoloVideo } from "@/components/room-video";
+import { Bone } from "@/components/skeleton";
 import { Sheet } from "@/components/ui";
 import { VisitTray } from "@/components/visit-tray";
 import { type BotModel, botDart } from "@/lib/darts/bot";
@@ -46,7 +47,8 @@ export function Counter() {
   const me = useMe();
   // Runs again on the client, where the preference lives; the server render is empty anyway.
   const [camera, setCamera] = useState(() => gameStore.prefs("camera-scoring", false));
-  if (!hydrated) return null;
+  // The game lives in this device's storage, so the server can only draw the scorer's frame.
+  if (!hydrated) return <CounterSkeleton />;
   if (!game) {
     return (
       <main className="flex flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
@@ -74,6 +76,26 @@ export function Counter() {
         }}
       />
     </SoloVideo>
+  );
+}
+
+function CounterSkeleton() {
+  return (
+    <main aria-busy className="locked safe-top safe-bottom fixed inset-0 flex flex-col gap-3 px-3 sm:px-4">
+      <header className="h-12 shrink-0" />
+      <div className="grid min-h-0 flex-1 gap-3 portrait:grid-rows-[minmax(0,1fr)_minmax(0,1.15fr)] landscape:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+        <Bone className="h-full rounded-3xl" />
+        <div className="grid h-full grid-cols-5 grid-rows-6 gap-2">
+          <div className="col-span-5 grid grid-cols-2 gap-2">
+            <Bone className="h-full rounded-2xl" />
+            <Bone className="h-full rounded-2xl" />
+          </div>
+          {Array.from({ length: 24 }, (_, i) => (
+            <Bone key={i} className={`h-full rounded-2xl ${i === 22 ? "col-span-2" : ""}`} delay={(i % 5) * 40} />
+          ))}
+        </div>
+      </div>
+    </main>
   );
 }
 
