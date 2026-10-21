@@ -115,7 +115,7 @@ function Play({ game }: { game: ActiveGame }) {
 
   function save() {
     gameStore.addPending(toPendingSave(game));
-    void syncPending().then(() => router.refresh());
+    void syncPending().then((r) => r.saved && router.refresh());
   }
 
   function finish() {

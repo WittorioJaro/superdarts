@@ -83,14 +83,16 @@ export function OnlineGame({ conn, me }: { conn: RoomConnection; me: GamePlayer 
     });
   }
 
-  // Save a finished game even if nobody taps anything. Every device tries; the server only saves once.
+  // Save a finished game even if nobody taps anything. Devices take turns by seat, so usually one request does it and the
+  // rest see `saved` arrive and stand down; a later seat still saves if the earlier one dropped out.
   const finished = state.finished && !live.saved && conn.pending === 0;
+  const seat = Math.max(0, players.findIndex((p) => p.id === me.id));
   const { refresh } = conn;
   useEffect(() => {
     if (!finished) return;
-    const id = setTimeout(() => void finishRoomGame(room.id).then(refresh).catch(() => {}), AUTOSAVE_MS);
+    const id = setTimeout(() => void finishRoomGame(room.id).then(refresh).catch(() => {}), AUTOSAVE_MS + seat * 4000);
     return () => clearTimeout(id);
-  }, [finished, room.id, refresh]);
+  }, [finished, room.id, refresh, seat]);
 
   if (state.finished) {
     const others = players.filter((p) => p.id !== me.id && online.has(p.id)).map((p) => p.name.split(" ")[0]);
