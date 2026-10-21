@@ -10,6 +10,7 @@ import { pickColor } from "@/lib/colors";
 import { type BotProfile, type BotModel, levelModel } from "@/lib/darts/bot";
 import { ghostModel } from "@/lib/queries";
 import type { SaveGameInput } from "@/lib/darts/schemas";
+import { revalidateGameData } from "@/lib/revalidate-data";
 import { persistGame, type SaveResult } from "@/lib/persist-game";
 
 export type { SaveResult } from "@/lib/persist-game";
@@ -20,7 +21,7 @@ export async function saveGame(input: unknown): Promise<SaveResult> {
   const result = await persistGame(input as SaveGameInput, me.id);
   if (!result.ok) return result;
 
-  revalidatePath("/", "layout");
+  revalidateGameData();
   return { ok: true };
 }
 
@@ -35,7 +36,8 @@ export async function addGuest(name: string) {
     .insert(players)
     .values({ name: parsed.data.name, color: pickColor(count) })
     .returning({ id: players.id, name: players.name, color: players.color, avatarUrl: players.avatarUrl });
-  revalidatePath("/", "layout");
+  revalidatePath("/match");
+  revalidatePath("/players");
   return { ok: true as const, player };
 }
 

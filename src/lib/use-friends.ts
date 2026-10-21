@@ -187,6 +187,10 @@ class FriendsStore {
     };
     const resume = () => {
       this.expire();
+      if (this.connected && supabase.realtime.isConnected()) {
+        this.track?.();
+        return;
+      }
       clearTimeout(retryTimer);
       retryTimer = undefined;
       void connect();
