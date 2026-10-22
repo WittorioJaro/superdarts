@@ -22,7 +22,8 @@ export function HomeView({ children }: { children: ReactNode }) {
       <SyncPending />
       <ResumeBanner />
 
-      <nav aria-label="Play" className="grid flex-1 gap-4 md:grid-cols-[1.25fr_1fr] md:grid-rows-2">
+      {/* A set height rather than flex-1: filling the leftover space made the cards resize, and their text move, as the list below loaded. */}
+      <nav aria-label="Play" className="grid shrink-0 gap-4 md:h-[clamp(24rem,56svh,38rem)] md:grid-cols-[1.25fr_1fr] md:grid-rows-2">
         <Link
           href="/practice"
           className="group relative flex min-h-56 flex-col justify-end overflow-hidden rounded-[2rem] bg-treble p-7 text-ink transition active:scale-[0.99] md:row-span-2"

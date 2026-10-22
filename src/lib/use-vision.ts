@@ -1,7 +1,7 @@
 "use client";
 
 import { useMaybeRoomContext } from "@livekit/components-react";
-import { type RemoteParticipant, RoomEvent } from "livekit-client";
+import { ConnectionState, type RemoteParticipant, RoomEvent } from "livekit-client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { cameraIdentity } from "./friends-types";
 import { type IpadMessage, type PhoneMessage, VISION_TOPIC, decodeMessage, encodeMessage } from "./vision/protocol";
@@ -59,7 +59,8 @@ export function useVision(meId: string, handlers: Handlers) {
   const send = useCallback(
     (m: IpadMessage) => {
       const bytes = encodeMessage(m);
-      if (!room || !bytes) return;
+      // Sending before the room connects would break every later send (see the phone's scorer).
+      if (!room || !bytes || room.state !== ConnectionState.Connected) return;
       void room.localParticipant
         .publishData(new Uint8Array(bytes), { reliable: true, topic: VISION_TOPIC, destinationIdentities: [cameraIdentity(meId)] })
         .catch(() => {});

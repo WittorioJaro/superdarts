@@ -90,16 +90,22 @@ export function Sheet({ open, onClose, children, label }: { open: boolean; onClo
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
-    if (open && !d.open) d.showModal();
+    if (open && !d.open) {
+      d.showModal();
+      // showModal focuses the first control. A text field should keep it, but on a button it draws the focus
+      // outline round whichever option comes first, as if it meant something. Focus the sheet itself instead.
+      if (!(document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement)) d.focus();
+    }
     if (!open && d.open) d.close();
   }, [open]);
   return (
     <dialog
       ref={ref}
       aria-label={label}
+      tabIndex={-1}
       onClose={onClose}
       onClick={(e) => e.target === ref.current && onClose()}
-      className="m-0 mt-auto w-full max-w-none bg-transparent p-0 text-chalk backdrop:bg-ink/75 backdrop:backdrop-blur-sm sm:m-auto sm:max-w-xl"
+      className="m-0 mt-auto w-full max-w-none bg-transparent p-0 text-chalk outline-none backdrop:bg-ink/75 backdrop:backdrop-blur-sm sm:m-auto sm:max-w-xl"
     >
       <div className="safe-bottom rounded-t-3xl border border-wire bg-cabinet p-6 sm:rounded-3xl">{children}</div>
     </dialog>
