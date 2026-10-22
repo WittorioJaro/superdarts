@@ -44,12 +44,15 @@ export function useVision(meId: string, handlers: Handlers) {
       else if (m.kind === "takeout") latest.current.onTakeout?.();
     };
     const onLeave = (p: RemoteParticipant) => p.identity === phone && setStatus(null);
+    const onDisconnected = () => setStatus(null);
     room.on(RoomEvent.DataReceived, onData);
     room.on(RoomEvent.ParticipantDisconnected, onLeave);
+    room.on(RoomEvent.Disconnected, onDisconnected);
     return () => {
       clearTimeout(stale);
       room.off(RoomEvent.DataReceived, onData);
       room.off(RoomEvent.ParticipantDisconnected, onLeave);
+      room.off(RoomEvent.Disconnected, onDisconnected);
     };
   }, [room, meId]);
 

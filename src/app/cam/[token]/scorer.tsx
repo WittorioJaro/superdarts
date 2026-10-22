@@ -16,7 +16,8 @@ import { scoreDistribution, topSuggestions } from "@/lib/vision/score";
 const FPS = 12;
 const WIDTH = 320;
 
-const calKey = (playerId: string) => `sd-vision-cal:${playerId}`;
+// Per camera: the front and back cameras usually share a resolution but never a view of the board.
+const calKey = (playerId: string, camera: string) => `sd-vision-cal:${playerId}:${camera}`;
 const biasKey = (playerId: string) => `sd-vision-bias:${playerId}`;
 
 function load<T>(key: string, restore: (v: unknown) => T | null): T | null {
@@ -28,16 +29,16 @@ function load<T>(key: string, restore: (v: unknown) => T | null): T | null {
   }
 }
 
-/** The saved calibration, if it was made at this camera resolution. */
-export function savedCalibration(playerId: string, size: { width: number; height: number } | null) {
-  const cal = load(calKey(playerId), restoreCalibration);
+/** The saved calibration for this camera, if it was made at this resolution. */
+export function savedCalibration(playerId: string, camera: string, size: { width: number; height: number } | null) {
+  const cal = load(calKey(playerId, camera), restoreCalibration);
   return cal && size && cal.imageSize.width === size.width && cal.imageSize.height === size.height ? cal : null;
 }
 
-export function saveCalibration(playerId: string, cal: Calibration | null) {
+export function saveCalibration(playerId: string, camera: string, cal: Calibration | null) {
   try {
-    if (cal) localStorage.setItem(calKey(playerId), JSON.stringify(cal));
-    else localStorage.removeItem(calKey(playerId));
+    if (cal) localStorage.setItem(calKey(playerId, camera), JSON.stringify(cal));
+    else localStorage.removeItem(calKey(playerId, camera));
     // A new camera position makes the old correction offset meaningless.
     localStorage.removeItem(biasKey(playerId));
   } catch {
@@ -59,6 +60,20 @@ export function useBoardScorer(video: HTMLVideoElement | null, playerId: string,
   const room = useMaybeRoomContext();
   const { localParticipant } = useLocalParticipant();
   const [state, setState] = useState<ScorerState>({ state: "off", last: null });
+  // Outlives a rebuild (redoing setup, a reconnect), so corrections for darts already sent still teach the phone.
+  const rawPoints = useRef(new Map<string, { x: number; y: number }>());
+  const running = !!video && !!calibration && !!room;
+
+  // While nothing is being watched, still tell the iPad the phone is here and needs setting up.
+  useEffect(() => {
+    if (running || !room) return;
+    const bytes = encodeMessage({ v: 1, kind: "status", calibrated: false, state: "waiting", fps: 0 });
+    if (!bytes) return;
+    const ping = () => void localParticipant.publishData(new Uint8Array(bytes), { reliable: true, topic: VISION_TOPIC, destinationIdentities: [playerId] }).catch(() => {});
+    ping();
+    const id = window.setInterval(ping, 2000);
+    return () => clearInterval(id);
+  }, [running, room, localParticipant, playerId]);
 
   useEffect(() => {
     if (!video || !calibration || !room) return;
@@ -68,7 +83,7 @@ export function useBoardScorer(video: HTMLVideoElement | null, playerId: string,
     let w = 0, h = 0;
     let luma: LumaProcessor, warp: BoardRectifier, detector: DartDetector;
     let bias = load(biasKey(playerId), restoreBias) ?? createBias();
-    const raw = new Map<string, { x: number; y: number }>();
+    const raw = rawPoints.current;
     const session = Math.random().toString(36).slice(2, 8);
     let frames = 0, fps = 0, lastTick = performance.now(), lastFrame = 0, handle = 0, stopped = false;
 

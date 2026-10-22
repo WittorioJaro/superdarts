@@ -55,10 +55,19 @@ export function OnlineGame({ conn, me }: { conn: RoomConnection; me: GamePlayer 
 
   // The phone on my board fills the tray; darts only go to the server once I confirm the visit.
   const { throwDart } = conn;
-  const cam = useCameraScoring(me.id, useCallback((ds: Dart[]) => ds.forEach(throwDart), [throwDart]));
+  const commit = useCallback((ds: Dart[]) => {
+    let taken = 0;
+    for (const d of ds) {
+      if (!throwDart(d)) break;
+      taken++;
+    }
+    return taken;
+  }, [throwDart]);
+  const cam = useCameraScoring(me.id, commit, myTurn);
+  // A turn starts and ends with an empty tray: nothing seen in between belongs to a visit.
   const clearTray = cam.tray.clear;
   useEffect(() => {
-    if (!myTurn) clearTray();
+    clearTray();
   }, [myTurn, clearTray]);
 
   // Big "180" / "Bust" calls for everyone's darts, but not when one is taken back.

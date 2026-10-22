@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { CamIcon, CameraPairing, useMyPhone } from "@/components/room-video";
 import { Sheet } from "@/components/ui";
 import { type Dart, sameDart } from "@/lib/darts/board";
@@ -11,11 +11,21 @@ import { type TrayDart, useTray } from "./visit-tray";
  * Camera darts go into the tray, never straight into the game. While the tray is in use the pad
  * adds to it or fixes a dart in it, and Undo takes the newest tray dart first.
  */
-export function useCameraScoring(meId: string, commit: (darts: Dart[]) => void) {
+export function useCameraScoring(
+  meId: string,
+  /** Returns how many darts the game took, which is fewer than given when an undo or a turn change got in first. */
+  commit: (darts: Dart[]) => number,
+  /** False while someone else (or a bot) throws: whatever the camera sees then isn't this visit. */
+  accepting: boolean,
+) {
   const tray = useTray();
+  const open = useRef(accepting);
+  useEffect(() => {
+    open.current = accepting;
+  }, [accepting]);
   const vision = useVision(meId, {
-    onDart: (m) => tray.add({ id: m.id, dart: m.candidates[0].dart, options: m.candidates }),
-    onTakeout: tray.markPulled,
+    onDart: (m) => open.current && tray.add({ id: m.id, dart: m.candidates[0].dart, options: m.candidates }),
+    onTakeout: () => open.current && tray.markPulled(),
   });
   const { send } = vision;
   // Shown while the camera can score, and kept while it holds darts even if the phone drops out.
@@ -23,9 +33,11 @@ export function useCameraScoring(meId: string, commit: (darts: Dart[]) => void) 
 
   const confirm = useCallback(
     (darts: TrayDart[]) => {
+      const taken = commit(darts.map((d) => d.dart));
       // Only changed guesses teach the phone; a confirmed top guess carries no new information.
-      for (const d of darts) if (d.options.length && !sameDart(d.options[0].dart, d.dart)) send({ v: 1, kind: "correction", id: d.id, dart: d.dart });
-      commit(darts.map((d) => d.dart));
+      for (const d of darts.slice(0, taken)) if (d.options.length && !sameDart(d.options[0].dart, d.dart)) send({ v: 1, kind: "correction", id: d.id, dart: d.dart });
+      // Anything the game refused stays in the tray to confirm again, rather than vanishing.
+      if (taken < darts.length) return tray.drop(taken);
       send({ v: 1, kind: "visit" });
       tray.clear();
     },

@@ -129,7 +129,13 @@ function Live({ session }: { session: CameraSession }) {
     setCamError(null);
     try {
       const t = await createLocalVideoTrack({ facingMode: facing, resolution: VideoPresets.h720.resolution });
-      if (!solo) await localParticipant.publishTrack(t, { source: Track.Source.Camera });
+      if (!solo) {
+        // A failed publish must not leave the camera running in the background, or the retry can't get it.
+        await localParticipant.publishTrack(t, { source: Track.Source.Camera }).catch((e) => {
+          t.stop();
+          throw e;
+        });
+      }
       setTrack(t);
     } catch (e) {
       const name = e instanceof Error ? e.name : "";
@@ -167,8 +173,8 @@ function Live({ session }: { session: CameraSession }) {
   // A calibration only fits the resolution it was made at; flipping cameras or rotating needs a new one.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCalibration(savedCalibration(session.player.id, size));
-  }, [session.player.id, size]);
+    setCalibration(savedCalibration(session.player.id, facing, size));
+  }, [session.player.id, facing, size]);
 
   // The iPad decides which device carries this player's voice.
   useEffect(() => {
@@ -238,7 +244,7 @@ function Live({ session }: { session: CameraSession }) {
           mirrored={mirrored}
           onCancel={() => setCalibrating(false)}
           onDone={(c) => {
-            saveCalibration(session.player.id, c);
+            saveCalibration(session.player.id, facing, c);
             setCalibration(c);
             setCalibrating(false);
           }}

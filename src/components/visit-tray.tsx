@@ -33,6 +33,8 @@ export interface Tray {
   remove(i: number): void;
   fix(i: number | null): void;
   markPulled(): void;
+  /** Drops the first n darts, after the game took them but not the rest. */
+  drop(n: number): void;
   clear(): void;
 }
 
@@ -71,10 +73,14 @@ export function useTray(): Tray {
     setPulled(false);
   }, []);
   const markPulled = useCallback(() => setPulled(true), []);
+  const drop = useCallback((n: number) => {
+    setDarts((ds) => ds.slice(n));
+    setFixing(null);
+  }, []);
 
   return useMemo(
-    () => ({ darts, fixing, pulled, add, pad, choose, remove, fix: setFixing, markPulled, clear }),
-    [darts, fixing, pulled, add, pad, choose, remove, markPulled, clear],
+    () => ({ darts, fixing, pulled, add, pad, choose, remove, fix: setFixing, markPulled, drop, clear }),
+    [darts, fixing, pulled, add, pad, choose, remove, markPulled, drop, clear],
   );
 }
 

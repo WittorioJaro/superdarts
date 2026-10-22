@@ -191,14 +191,15 @@ export class RoomStore {
 
   throwDart = (input: Dart) => {
     const room = this.value.room, game = room.game;
-    if (!this.active || !game || game.saved || room.status !== "playing" || this.undoing) return;
+    if (!this.active || !game || game.saved || room.status !== "playing" || this.undoing) return false;
     const position = room.players.find((p) => p.id === this.meId)?.position;
-    if (turnOf(room.settings.mode, room.settings.config, room.players.length, game.darts) !== position) return;
+    if (turnOf(room.settings.mode, room.settings.config, room.players.length, game.darts) !== position) return false;
     const dart = { ...input, t: input.t ?? Date.now() };
     this.queue.push({ dart, gameId: game.id });
     this.error = null;
     this.publish();
     void this.pump();
+    return true;
   };
 
   undo = () => {

@@ -45,8 +45,8 @@ export function Counter() {
   const game = useActiveGame();
   const hydrated = useHydrated();
   const me = useMe();
-  // Runs again on the client, where the preference lives; the server render is empty anyway.
-  const [camera, setCamera] = useState(() => gameStore.prefs("camera-scoring", false));
+  // The preference lives in localStorage, which the server render can't touch; that render is the skeleton anyway.
+  const [camera, setCamera] = useState<boolean>(() => typeof window !== "undefined" && gameStore.prefs("camera-scoring", false));
   // The game lives in this device's storage, so the server can only draw the scorer's frame.
   if (!hydrated) return <CounterSkeleton />;
   if (!game) {
@@ -60,20 +60,22 @@ export function Counter() {
       </main>
     );
   }
-  if (!me) return <Play key={game.id} game={game} camera={null} />;
+  // Always the same tree, so Play never remounts (and loses its state) when the profile arrives.
   return (
-    <SoloVideo meId={me.id} enabled={camera}>
+    <SoloVideo meId={me?.id ?? ""} enabled={!!me && camera}>
       <Play
         key={game.id}
         game={game}
-        camera={{
-          meId: me.id,
-          enabled: camera,
-          set: (on) => {
-            setCamera(on);
-            gameStore.setPref("camera-scoring", on);
-          },
-        }}
+        camera={
+          me && {
+            meId: me.id,
+            enabled: camera,
+            set: (on) => {
+              setCamera(on);
+              gameStore.setPref("camera-scoring", on);
+            },
+          }
+        }
       />
     </SoloVideo>
   );
@@ -146,13 +148,16 @@ function Play({ game, camera }: { game: ActiveGame; camera: CameraSetting | null
         const ev = rebuild(next).event;
         if (ev && ev.type !== "hit" && ev.type !== "match") event = ev;
       }
-      if (next === game) return;
+      const taken = next.darts.length - game.darts.length;
+      if (!taken) return 0;
       gameStore.setActive(next);
       if (event) setFlash({ key: next.darts.length, event });
+      return taken;
     },
     [game],
   );
-  const cam = useCameraScoring(camera?.meId ?? "", throwDarts);
+  const botTurn = !state.finished && !game.ended && game.mode === "x01" && !!botAt(game, state.current);
+  const cam = useCameraScoring(camera?.meId ?? "", throwDarts, !botTurn && !state.finished && !game.ended);
 
   // Undo goes back to the last dart a person threw, taking any bot visit with it.
   const undo = useCallback(() => {
