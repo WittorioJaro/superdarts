@@ -1,7 +1,7 @@
 "use server";
 
 import { randomInt, randomUUID } from "node:crypto";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { AccessToken, TrackSource } from "livekit-server-sdk";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
@@ -16,6 +16,7 @@ import { isGameFinished, rotate, turnOf } from "@/lib/darts/rooms";
 import { configSchemas, dartSchema } from "@/lib/darts/schemas";
 import { cameraIdentity, type CameraLink, type CameraSession, type RoomInvite } from "@/lib/friends-types";
 import { persistGame, type GameTransaction } from "@/lib/persist-game";
+import { revalidateGameData } from "@/lib/revalidate-data";
 import { getRoomSnapshot } from "@/lib/rooms";
 import type { RoomActionResult, RoomSettings, RoomSnapshot } from "@/lib/rooms-types";
 
@@ -38,11 +39,11 @@ function requireRoom(condition: unknown, message: string): asserts condition {
 
 /** Every mutation holds the same row lock until all its writes (including stats) commit. */
 async function withRoom<T extends object = object>(roomId: string, meId: string,
-  action: (tx: GameTransaction, room: Room, members: Member[]) => Promise<RoomActionResult<T>>): Promise<RoomActionResult<T>> {
+  action: (tx: GameTransaction, room: Room, members: Member[]) => Promise<RoomActionResult<T>>, lock: "update" | "share" = "update"): Promise<RoomActionResult<T>> {
   if (!idSchema.safeParse(roomId).success) return { ok: false, error: "Invalid room." };
   try {
     return await db.transaction(async (tx) => {
-      const [room] = await tx.select().from(rooms).where(eq(rooms.id, roomId)).for("update");
+      const [room] = await tx.select().from(rooms).where(eq(rooms.id, roomId)).for(lock);
       requireRoom(room, "The room no longer exists.");
       const members = await tx.select().from(roomPlayers).where(eq(roomPlayers.roomId, roomId)).orderBy(asc(roomPlayers.position));
       requireRoom(members.some((p) => p.playerId === meId), "You're not a member of this room.");
@@ -56,7 +57,7 @@ async function withRoom<T extends object = object>(roomId: string, meId: string,
 
 async function currentGame(tx: GameTransaction, room: Room) {
   requireRoom(room.gameId && room.gameStartedAt, "The game hasn't started yet.");
-  const rows = await tx.select().from(roomDarts).where(and(eq(roomDarts.roomId, room.id), eq(roomDarts.gameId, room.gameId)))
+  const rows = await tx.select({ seq: roomDarts.seq, playerId: roomDarts.playerId, dart: roomDarts.dart }).from(roomDarts).where(and(eq(roomDarts.roomId, room.id), eq(roomDarts.gameId, room.gameId)))
     .orderBy(asc(roomDarts.seq));
   const [saved] = await tx.select({ id: games.id }).from(games).where(eq(games.id, room.gameId));
   return { rows, darts: rows.map((d) => d.dart), saved: !!saved, id: room.gameId, startedAt: room.gameStartedAt };
@@ -71,6 +72,14 @@ async function saveFinished(tx: GameTransaction, room: Room, members: Member[], 
 
 async function touch(tx: GameTransaction, roomId: string) {
   await tx.update(rooms).set({ updatedAt: new Date() }).where(eq(rooms.id, roomId));
+}
+
+async function reorderPlayers(tx: GameTransaction, roomId: string, members: Member[]) {
+  if (!members.length) return;
+  const positions = sql`case ${roomPlayers.playerId} ${sql.join(members.map((p, i) => sql`when ${p.playerId}::uuid then ${i}::smallint`), sql` `)} end`;
+  await tx.update(roomPlayers).set({ position: positions })
+    .where(and(eq(roomPlayers.roomId, roomId), inArray(roomPlayers.playerId, members.map((p) => p.playerId)),
+      sql`${roomPlayers.position} is distinct from ${positions}`));
 }
 
 export async function createRoom(settings: RoomSettings): Promise<RoomActionResult<{ code: string }>> {
@@ -125,9 +134,7 @@ export async function leaveRoom(roomId: string): Promise<RoomActionResult> {
     } else {
       await tx.delete(roomPlayers).where(and(eq(roomPlayers.roomId, roomId), eq(roomPlayers.playerId, me.id)));
       const remaining = members.filter((p) => p.playerId !== me.id);
-      for (const [position, player] of remaining.entries()) {
-        await tx.update(roomPlayers).set({ position }).where(and(eq(roomPlayers.roomId, roomId), eq(roomPlayers.playerId, player.playerId)));
-      }
+      await reorderPlayers(tx, roomId, remaining);
       await touch(tx, roomId);
     }
     return { ok: true };
@@ -145,7 +152,11 @@ export async function closeRoom(roomId: string): Promise<RoomActionResult> {
     await tx.update(rooms).set({ status: "closed", updatedAt: new Date() }).where(eq(rooms.id, roomId));
     return { ok: true };
   });
-  if (result.ok) revalidatePath("/", "layout");
+  if (result.ok) {
+    revalidateGameData();
+    revalidatePath("/online");
+    revalidatePath("/r/[code]", "page");
+  }
   return result;
 }
 
@@ -210,7 +221,11 @@ export async function finishRoomGame(roomId: string): Promise<RoomActionResult> 
     await touch(tx, roomId);
     return { ok: true };
   });
-  if (result.ok) revalidatePath("/", "layout");
+  if (result.ok) {
+    revalidateGameData();
+    revalidatePath("/online");
+    revalidatePath("/r/[code]", "page");
+  }
   return result;
 }
 
@@ -221,23 +236,25 @@ export async function rematchRoom(roomId: string): Promise<RoomActionResult> {
     const game = await currentGame(tx, room);
     requireRoom(isGameFinished(room.mode, room.config, members.length, game.darts), "The game isn't finished yet.");
     await saveFinished(tx, room, members, game);
-    for (const [position, player] of rotate(members).entries()) {
-      await tx.update(roomPlayers).set({ position }).where(and(eq(roomPlayers.roomId, roomId), eq(roomPlayers.playerId, player.playerId)));
-    }
+    await reorderPlayers(tx, roomId, rotate(members));
     await tx.update(rooms).set({ gameId: randomUUID(), gameStartedAt: new Date(), updatedAt: new Date() }).where(eq(rooms.id, roomId));
     return { ok: true };
   });
-  if (result.ok) revalidatePath("/", "layout");
+  if (result.ok) {
+    revalidateGameData();
+    revalidatePath("/online");
+    revalidatePath("/r/[code]", "page");
+  }
   return result;
 }
 
 export async function roomSnapshot(roomId: string): Promise<RoomActionResult<{ room: RoomSnapshot }>> {
   const me = await getCurrentPlayer();
-  return withRoom(roomId, me.id, async (tx) => {
-    const room = await getRoomSnapshot(roomId, tx);
+  return withRoom(roomId, me.id, async (tx, lockedRoom) => {
+    const room = await getRoomSnapshot(roomId, tx, lockedRoom);
     requireRoom(room, "The room no longer exists.");
     return { ok: true, room };
-  });
+  }, "share");
 }
 
 export async function videoToken(roomId: string): Promise<RoomActionResult<{ url: string; token: string }>> {
@@ -281,6 +298,25 @@ export async function invitePlayer(roomId: string, playerId: string): Promise<Ro
   });
 }
 
+export async function soloVideoToken(): Promise<RoomActionResult<{ url: string; token: string }>> {
+  const me = await getCurrentPlayer();
+  const url = process.env.LIVEKIT_URL, key = process.env.LIVEKIT_API_KEY, secret = process.env.LIVEKIT_API_SECRET;
+  if (!url || !key || !secret) return { ok: false, error: "video_unavailable" };
+  const token = new AccessToken(key, secret, { identity: me.id, name: me.name, metadata: JSON.stringify({ color: me.color }), ttl: "6h" });
+  token.addGrant({ roomJoin: true, room: `superdarts-solo-${me.id}`, canPublish: true, canPublishSources: [TrackSource.MICROPHONE],
+    canSubscribe: true, canPublishData: true, canUpdateOwnMetadata: true });
+  return { ok: true, url, token: await token.toJwt() };
+}
+
+export async function soloCameraLink(): Promise<RoomActionResult<CameraLink>> {
+  const me = await getCurrentPlayer();
+  const url = process.env.LIVEKIT_URL, key = process.env.LIVEKIT_API_KEY, secret = process.env.LIVEKIT_API_SECRET;
+  if (!url || !key || !secret) return { ok: false, error: "video_unavailable" };
+  const expiry = Math.floor(Date.now() / 1000) + 12 * 60 * 60;
+  const token = signCameraToken({ k: "solo", p: me.id, e: expiry }, secret);
+  return { ok: true, path: `/cam/${token}`, expiresAt: new Date(expiry * 1000).toISOString() };
+}
+
 export async function cameraLink(roomId: string): Promise<RoomActionResult<CameraLink>> {
   const me = await getCurrentPlayer();
   return withRoom<CameraLink>(roomId, me.id, async (_tx, room) => {
@@ -300,6 +336,17 @@ export async function cameraToken(token: string): Promise<RoomActionResult<Camer
   const verified = verifyCameraToken(token, secret);
   if (!verified.ok) return { ok: false, error: verified.error === "expired"
     ? "This camera link has expired. Make a new one on the iPad." : "This camera link is invalid. Make a new one on the iPad." };
+  if (verified.payload.k === "solo") {
+    const playerId = verified.payload.p;
+    const [player] = await db.select().from(players).where(eq(players.id, playerId));
+    if (!player) return { ok: false, error: "This player no longer exists. Make a new camera link on the iPad." };
+    const access = new AccessToken(key, secret, { identity: cameraIdentity(playerId), name: `${player.name}'s camera`,
+      metadata: JSON.stringify({ color: player.color, camera: true }), ttl: "6h" });
+    access.addGrant({ roomJoin: true, room: `superdarts-solo-${playerId}`, canPublish: true,
+      canPublishSources: [TrackSource.CAMERA, TrackSource.MICROPHONE], canSubscribe: true, canPublishData: true });
+    return { ok: true, url, token: await access.toJwt(), roomCode: null,
+      player: { id: player.id, name: player.name, color: player.color, avatarUrl: player.avatarUrl } };
+  }
   const { r: roomId, p: playerId } = verified.payload;
   return withRoom<CameraSession>(roomId, playerId, async (tx, room) => {
     requireRoom(room.status !== "closed", "The room has closed.");
@@ -309,7 +356,7 @@ export async function cameraToken(token: string): Promise<RoomActionResult<Camer
       metadata: JSON.stringify({ color: player.color, camera: true }), ttl: "6h" });
     access.addGrant({ roomJoin: true, room: `superdarts-${roomId}`, canPublish: true,
       // Subscribe is granted so the phone sees the iPad's `mic` attribute; it connects with autoSubscribe off, so no media flows to it.
-      canPublishSources: [TrackSource.CAMERA, TrackSource.MICROPHONE], canSubscribe: true, canPublishData: false });
+      canPublishSources: [TrackSource.CAMERA, TrackSource.MICROPHONE], canSubscribe: true, canPublishData: true });
     return { ok: true, url, token: await access.toJwt(), roomCode: room.code,
       player: { id: player.id, name: player.name, color: player.color, avatarUrl: player.avatarUrl } };
   });

@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { addGuest, ensureBot } from "@/app/actions";
 import { DEFAULT_OPTS, type GameOpts, GameOptions, cricketConfig, x01Config } from "@/components/game-options";
+import { Bone } from "@/components/skeleton";
 import { Avatar, Sheet } from "@/components/ui";
 import type { BotModel } from "@/lib/darts/bot";
 import { gameDetail } from "@/lib/darts/labels";
@@ -260,6 +261,38 @@ export function MatchSetup({ players: initial, meId }: { players: GamePlayer[]; 
           </button>
         </form>
       </Sheet>
+    </div>
+  );
+}
+
+/** The page as it first draws: the real game options, placeholders where the players go. */
+export function MatchSetupSkeleton() {
+  return (
+    <div aria-hidden className="pointer-events-none grid gap-8 pb-6 lg:grid-cols-[1.1fr_1fr]">
+      <section className="flex flex-col gap-3">
+        <div className="flex items-baseline justify-between">
+          <h2 className="font-display text-2xl font-bold">Who&apos;s playing</h2>
+          <span className="text-sm text-dim">Tap in throwing order</span>
+        </div>
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {[0, 1, 2, 3].map((i) => (
+            <li key={i} className="flex items-center gap-3 rounded-2xl border-2 border-transparent bg-cabinet p-3">
+              <Bone className="h-11 w-11 rounded-full bg-felt" delay={i * 100} />
+              <Bone className="h-4 w-28 rounded-md bg-felt" delay={i * 100} />
+            </li>
+          ))}
+          {["Add player", "Play a bot"].map((label) => (
+            <li key={label} className="flex min-h-[68px] items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-wire text-dim">
+              <span className="text-2xl leading-none">+</span> {label}
+            </li>
+          ))}
+        </ul>
+      </section>
+      <section className="flex flex-col gap-6">
+        <h2 className="font-display text-2xl font-bold">Game</h2>
+        <GameOptions opts={DEFAULTS} onChange={() => {}} allowCricket canRank={false} rankHint="Ratings are for 501 with two or more players." />
+        <Bone className="mt-2 h-20 rounded-2xl bg-double" />
+      </section>
     </div>
   );
 }

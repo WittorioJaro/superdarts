@@ -88,7 +88,7 @@ export const turns = pgTable(
     /** Includes unknown-target attempts from visit totals; old rows use the dart-level fallback. */
     atDouble: integer("at_double").notNull().default(0),
   },
-  (t) => [index("turns_player_idx").on(t.playerId), index("turns_game_idx").on(t.gameId)],
+  (t) => [index("turns_player_idx").on(t.playerId), index("turns_game_seq_idx").on(t.gameId, t.seq)],
 ).enableRLS();
 
 export const darts = pgTable(
@@ -107,7 +107,7 @@ export const darts = pgTable(
     atDouble: boolean("at_double").notNull(),
     thrownAt: timestamp("thrown_at", { withTimezone: true }),
   },
-  (t) => [index("darts_player_idx").on(t.playerId), index("darts_game_idx").on(t.gameId)],
+  (t) => [index("darts_player_idx").on(t.playerId), index("darts_game_turn_idx").on(t.gameId, t.turnSeq)],
 ).enableRLS();
 
 export const playersRelations = relations(players, ({ many }) => ({
@@ -143,7 +143,7 @@ export const ratingChanges = pgTable("rating_changes", {
   after: real("after").notNull(),
   rdAfter: real("rd_after").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [primaryKey({ columns: [t.gameId, t.playerId] }), index("rating_changes_player_idx").on(t.playerId)]).enableRLS();
+}, (t) => [primaryKey({ columns: [t.gameId, t.playerId] }), index("rating_changes_player_created_idx").on(t.playerId, t.createdAt, t.gameId)]).enableRLS();
 
 
 export const rooms = pgTable("rooms", {
@@ -158,7 +158,7 @@ export const rooms = pgTable("rooms", {
   gameStartedAt: timestamp("game_started_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index("rooms_updated_at_idx").on(t.updatedAt)]).enableRLS();
+}, (t) => [index("rooms_updated_at_idx").on(t.updatedAt), index("rooms_game_idx").on(t.gameId)]).enableRLS();
 
 export const roomPlayers = pgTable("room_players", {
   roomId: uuid("room_id").notNull().references(() => rooms.id, { onDelete: "cascade" }),

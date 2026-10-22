@@ -16,11 +16,15 @@ export function isEmailAllowed(email: string | undefined) {
   return list.length === 0 || (!!email && list.includes(email.toLowerCase()));
 }
 
-/** The signed-in user's player profile, created on first sign-in. Redirects to login when signed out. */
-export const getCurrentPlayer = cache(async (): Promise<Player> => {
+const getClaims = cache(async () => {
   const supabase = await createClient();
   const { data } = await supabase.auth.getClaims();
-  const claims = data?.claims;
+  return data?.claims;
+});
+
+/** The signed-in user's player profile, created on first sign-in. Redirects to login when signed out. */
+export const getCurrentPlayer = cache(async (): Promise<Player> => {
+  const claims = await getClaims();
   if (!claims?.sub) redirect("/login");
   if (!isEmailAllowed(claims.email)) redirect("/login?error=not_invited");
 
@@ -40,8 +44,7 @@ export const getCurrentPlayer = cache(async (): Promise<Player> => {
 
 /** Like getCurrentPlayer, but null instead of redirecting. For the root layout, which also renders the login page. */
 export const getSignedInPlayer = cache(async (): Promise<Player | null> => {
-  const supabase = await createClient();
-  const { data } = await supabase.auth.getClaims();
-  if (!data?.claims?.sub || !isEmailAllowed(data.claims.email)) return null;
+  const claims = await getClaims();
+  if (!claims?.sub || !isEmailAllowed(claims.email)) return null;
   return getCurrentPlayer();
 });

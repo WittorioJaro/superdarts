@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense, cache } from "react";
 import { AverageTrend, BoardHeatmap, DoublesTable, MissBreakdown, PracticeVsMatch, RatingChart, SessionFade, Sparkline } from "@/components/charts";
 import { RecentGames } from "@/components/recent-games";
 import { Avatar, BackLink } from "@/components/ui";
@@ -23,6 +24,7 @@ import {
   targetSpread,
 } from "@/lib/queries";
 import { EditProfile } from "./edit-profile";
+import { ProfileStatsSkeleton, Section } from "./profile-skeleton";
 import { SignOut } from "./sign-out";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -48,20 +50,6 @@ export default async function PlayerPage({ params, searchParams }: PageProps<"/p
   if (!player) notFound();
   const isMe = me.id === player.id;
 
-  const [stats, practice, recent, rating, awards, targets, spread, weeks, fade] = await Promise.all([
-    playerStats(player.id, scope, range),
-    practiceHistory(player.id),
-    recentGames(player.id, 10),
-    ratingHistory(player.id),
-    achievements(player.id),
-    practiceTargets(player.id),
-    targetSpread(player.id, target, range),
-    practiceVsMatch(player.id),
-    fatigue(player.id),
-  ]);
-  const currentRating = rating.length ? rating[rating.length - 1].rating : null;
-  const s = stats.scoring;
-
   const link = (next: { scope?: StatsScope; range?: StatsRange; target?: string }) => {
     const q = new URLSearchParams();
     const sc = next.scope ?? scope;
@@ -84,12 +72,9 @@ export default async function PlayerPage({ params, searchParams }: PageProps<"/p
             <h1 className="truncate font-display text-5xl font-extrabold tracking-tight">{player.name}</h1>
             <p className="text-dim">
               {player.userId ? "Playing" : "Guest player"} since {monthFmt.format(player.createdAt)}
-              {currentRating !== null && (
-                <>
-                  {" · "}
-                  <span className="font-semibold text-brass">Rating {Math.round(currentRating)}</span>
-                </>
-              )}
+              <Suspense>
+                <CurrentRating playerId={player.id} />
+              </Suspense>
             </p>
           </div>
           {!isMe && (
@@ -131,6 +116,56 @@ export default async function PlayerPage({ params, searchParams }: PageProps<"/p
         ))}
       </nav>
 
+      <Suspense fallback={<ProfileStatsSkeleton />}>
+        <ProfileStats playerId={player.id} scope={scope} range={range} target={target} link={link} />
+      </Suspense>
+    </main>
+  );
+}
+
+/** Called by the header and the rating chart in the same request; this runs the query once. */
+const ratings = cache(ratingHistory);
+
+async function CurrentRating({ playerId }: { playerId: string }) {
+  const rating = (await ratings(playerId)).at(-1)?.rating;
+  if (rating === undefined) return null;
+  return (
+    <>
+      {" · "}
+      <span className="font-semibold text-brass">Rating {Math.round(rating)}</span>
+    </>
+  );
+}
+
+/** Everything below the filters. Streams in after the header, which only needs the player. */
+async function ProfileStats({
+  playerId,
+  scope,
+  range,
+  target,
+  link,
+}: {
+  playerId: string;
+  scope: StatsScope;
+  range: StatsRange;
+  target: { s: number; m: 1 | 2 | 3 };
+  link: (next: { scope?: StatsScope; range?: StatsRange; target?: string }) => string;
+}) {
+  const [stats, practice, recent, rating, awards, targets, spread, weeks, fade] = await Promise.all([
+    playerStats(playerId, scope, range),
+    practiceHistory(playerId),
+    recentGames(playerId, 10),
+    ratings(playerId),
+    achievements(playerId),
+    practiceTargets(playerId),
+    targetSpread(playerId, target, range),
+    practiceVsMatch(playerId),
+    fatigue(playerId),
+  ]);
+  const s = stats.scoring;
+
+  return (
+    <>
       <section aria-label="Headline numbers" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Tile label="3-dart average" value={fmtAvg(s.darts ? s.average : null)} hero />
         <Tile label="First 9 average" value={fmtAvg(s.darts ? s.first9 : null)} />
@@ -243,9 +278,9 @@ export default async function PlayerPage({ params, searchParams }: PageProps<"/p
       </Section>
 
       <Section title="Recent games">
-        <RecentGames games={recent} me={player.id} />
+        <RecentGames games={recent} me={playerId} />
       </Section>
-    </main>
+    </>
   );
 }
 
@@ -270,15 +305,6 @@ function Tile({ label, value, note, hero, children }: { label: string; value: st
       {note && <span className={`mt-2 text-sm ${hero ? "text-ink/70" : "text-dim"}`}>{note}</span>}
       {children}
     </div>
-  );
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="flex flex-col gap-4">
-      <h2 className="font-display text-3xl font-bold">{title}</h2>
-      <div className="rounded-3xl bg-cabinet p-5 sm:p-6">{children}</div>
-    </section>
   );
 }
 

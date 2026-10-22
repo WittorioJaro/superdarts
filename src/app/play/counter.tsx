@@ -3,8 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { CameraButton, useCameraScoring } from "@/components/camera-scoring";
+import { useMe } from "@/components/me";
 import { Pad, TotalPad } from "@/components/pad";
+import { SoloVideo } from "@/components/room-video";
+import { Bone } from "@/components/skeleton";
 import { Sheet } from "@/components/ui";
+import { VisitTray } from "@/components/visit-tray";
 import { type BotModel, botDart } from "@/lib/darts/bot";
 import { isCheckoutPossible } from "@/lib/darts/checkout";
 import { type Dart, visitTotal } from "@/lib/darts/board";
@@ -39,7 +44,11 @@ function useHydrated() {
 export function Counter() {
   const game = useActiveGame();
   const hydrated = useHydrated();
-  if (!hydrated) return null;
+  const me = useMe();
+  // The preference lives in localStorage, which the server render can't touch; that render is the skeleton anyway.
+  const [camera, setCamera] = useState<boolean>(() => typeof window !== "undefined" && gameStore.prefs("camera-scoring", false));
+  // The game lives in this device's storage, so the server can only draw the scorer's frame.
+  if (!hydrated) return <CounterSkeleton />;
   if (!game) {
     return (
       <main className="flex flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
@@ -51,7 +60,45 @@ export function Counter() {
       </main>
     );
   }
-  return <Play key={game.id} game={game} />;
+  // Always the same tree, so Play never remounts (and loses its state) when the profile arrives.
+  return (
+    <SoloVideo meId={me?.id ?? ""} enabled={!!me && camera}>
+      <Play
+        key={game.id}
+        game={game}
+        camera={
+          me && {
+            meId: me.id,
+            enabled: camera,
+            set: (on) => {
+              setCamera(on);
+              gameStore.setPref("camera-scoring", on);
+            },
+          }
+        }
+      />
+    </SoloVideo>
+  );
+}
+
+function CounterSkeleton() {
+  return (
+    <main aria-busy className="locked safe-top safe-bottom fixed inset-0 flex flex-col gap-3 px-3 sm:px-4">
+      <header className="h-12 shrink-0" />
+      <div className="grid min-h-0 flex-1 gap-3 portrait:grid-rows-[minmax(0,1fr)_minmax(0,1.15fr)] landscape:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+        <Bone className="h-full rounded-3xl" />
+        <div className="grid h-full grid-cols-5 grid-rows-6 gap-2">
+          <div className="col-span-5 grid grid-cols-2 gap-2">
+            <Bone className="h-full rounded-2xl" />
+            <Bone className="h-full rounded-2xl" />
+          </div>
+          {Array.from({ length: 24 }, (_, i) => (
+            <Bone key={i} className={`h-full rounded-2xl ${i === 22 ? "col-span-2" : ""}`} delay={(i % 5) * 40} />
+          ))}
+        </div>
+      </div>
+    </main>
+  );
 }
 
 function rebuild(game: ActiveGame): AnyState {
@@ -67,7 +114,9 @@ function botAt(game: ActiveGame, i: number) {
 
 const BOT_PACE = 650;
 
-function Play({ game }: { game: ActiveGame }) {
+type CameraSetting = { meId: string; enabled: boolean; set: (on: boolean) => void };
+
+function Play({ game, camera }: { game: ActiveGame; camera: CameraSetting | null }) {
   const router = useRouter();
   const state = useMemo(() => rebuild(game), [game]);
   const [flash, setFlash] = useState<{ key: number; event: GameEvent } | null>(null);
@@ -86,6 +135,29 @@ function Play({ game }: { game: ActiveGame }) {
     },
     [game, state.finished],
   );
+
+  // A confirmed visit goes in as one write. Each dart still gets its own time stamp, and the
+  // biggest call (bust, 180, leg) is flashed once.
+  const throwDarts = useCallback(
+    (ds: Dart[]) => {
+      let next = game;
+      let event: GameEvent | null = null;
+      for (const d of ds) {
+        if (rebuild(next).finished) break;
+        next = { ...next, darts: [...next.darts, { ...d, t: Date.now() }] };
+        const ev = rebuild(next).event;
+        if (ev && ev.type !== "hit" && ev.type !== "match") event = ev;
+      }
+      const taken = next.darts.length - game.darts.length;
+      if (!taken) return 0;
+      gameStore.setActive(next);
+      if (event) setFlash({ key: next.darts.length, event });
+      return taken;
+    },
+    [game],
+  );
+  const botTurn = !state.finished && !game.ended && game.mode === "x01" && !!botAt(game, state.current);
+  const cam = useCameraScoring(camera?.meId ?? "", throwDarts, !botTurn && !state.finished && !game.ended);
 
   // Undo goes back to the last dart a person threw, taking any bot visit with it.
   const undo = useCallback(() => {
@@ -115,7 +187,7 @@ function Play({ game }: { game: ActiveGame }) {
 
   function save() {
     gameStore.addPending(toPendingSave(game));
-    void syncPending().then(() => router.refresh());
+    void syncPending().then((r) => r.saved && router.refresh());
   }
 
   function finish() {
@@ -158,7 +230,8 @@ function Play({ game }: { game: ActiveGame }) {
   const { targets, quick } = aimFor(game, state);
   // Totals are entered a whole visit at a time, so the switch only works between visits.
   const visitOpen = state.open !== null && state.turns[state.open].darts.length > 0;
-  const useTotals = game.mode === "x01" && entry === "total" && !visitOpen;
+  // Camera darts are entered one by one, so the tray always uses the dart pad.
+  const useTotals = game.mode === "x01" && entry === "total" && !visitOpen && !cam.active;
 
   function switchEntry(next: "darts" | "total") {
     setEntry(next);
@@ -182,24 +255,34 @@ function Play({ game }: { game: ActiveGame }) {
           <span className="font-display text-2xl font-bold">{gameTitle(game.mode, config)}</span>
           <span className="ml-3 text-dim">{inPlan ? `Training ${inPlan.index + 1} of ${inPlan.steps.length}` : headerDetail(game, state)}</span>
         </p>
-        {game.mode === "x01" ? (
-          <div className="flex rounded-xl bg-cabinet p-1" role="group" aria-label="Enter scores as">
-            {(["darts", "total"] as const).map((e) => (
-              <button
-                key={e}
-                type="button"
-                aria-pressed={entry === e}
-                disabled={visitOpen && e === "total"}
-                onClick={() => switchEntry(e)}
-                className={`h-10 rounded-lg px-3 font-medium transition disabled:opacity-40 ${entry === e ? "bg-chalk text-ink" : "text-dim hover:text-chalk"}`}
-              >
-                {e === "darts" ? "Darts" : "Total"}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <span className="w-24" />
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {camera && (
+            <CameraButton
+              enabled={camera.enabled}
+              onEnabled={camera.set}
+              status={cam.status}
+              onReset={() => cam.send({ v: 1, kind: "reset" })}
+            />
+          )}
+          {game.mode === "x01" && !cam.active ? (
+            <div className="flex rounded-xl bg-cabinet p-1" role="group" aria-label="Enter scores as">
+              {(["darts", "total"] as const).map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  aria-pressed={entry === e}
+                  disabled={visitOpen && e === "total"}
+                  onClick={() => switchEntry(e)}
+                  className={`h-10 rounded-lg px-3 font-medium transition disabled:opacity-40 ${entry === e ? "bg-chalk text-ink" : "text-dim hover:text-chalk"}`}
+                >
+                  {e === "darts" ? "Darts" : "Total"}
+                </button>
+              ))}
+            </div>
+          ) : (
+            !camera && <span className="w-24" />
+          )}
+        </div>
       </header>
 
       <div className="grid min-h-0 flex-1 gap-3 portrait:grid-rows-[minmax(0,1fr)_minmax(0,1.15fr)] landscape:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -228,6 +311,19 @@ function Play({ game }: { game: ActiveGame }) {
               onUndo={undo}
               canUndo={game.darts.length > 0}
             />
+          ) : cam.active ? (
+            <div className="flex h-full flex-col gap-2">
+              <VisitTray tray={cam.tray} game={game} watching={!!cam.status?.calibrated} onConfirm={cam.confirm} />
+              <div className="min-h-0 flex-1">
+                <Pad
+                  onDart={cam.tray.pad}
+                  onUndo={() => cam.undo(undo)}
+                  canUndo={cam.tray.darts.length > 0 || game.darts.length > 0}
+                  targets={targets}
+                  quick={quick}
+                />
+              </div>
+            </div>
           ) : (
             <Pad onDart={throwDart} onUndo={undo} canUndo={game.darts.length > 0} targets={targets} quick={quick} />
           )}

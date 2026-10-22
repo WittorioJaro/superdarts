@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne } from "drizzle-orm";
 import { db } from "@/db";
 import { games, players, roomDarts, roomPlayers, rooms } from "@/db/schema";
 import type { GameTransaction } from "./persist-game";
@@ -9,10 +9,11 @@ export function settingsOf(room: typeof rooms.$inferSelect): RoomSettings {
   return { mode: room.mode, config: room.config, ranked: room.ranked } as RoomSettings;
 }
 
-/** The room lock also makes the players, game id, saved flag and dart list one consistent snapshot. */
-export async function getRoomSnapshot(roomId: string, transaction?: GameTransaction): Promise<RoomSnapshot | null> {
+/** The room lock also makes the players, game id, saved flag and dart list one consistent snapshot.
+ * Supplying lockedRoom reuses the row already locked by the caller's transaction. */
+export async function getRoomSnapshot(roomId: string, transaction?: GameTransaction, lockedRoom?: typeof rooms.$inferSelect): Promise<RoomSnapshot | null> {
   if (!transaction) return db.transaction((tx) => getRoomSnapshot(roomId, tx));
-  const [room] = await transaction.select().from(rooms).where(eq(rooms.id, roomId)).for("share");
+  const room = lockedRoom ?? (await transaction.select().from(rooms).where(eq(rooms.id, roomId)).for("share"))[0];
   if (!room) return null;
   const members = await transaction.select({ id: players.id, name: players.name, color: players.color,
     avatarUrl: players.avatarUrl, position: roomPlayers.position }).from(roomPlayers)
@@ -28,7 +29,7 @@ export async function getRoomSnapshot(roomId: string, transaction?: GameTransact
 }
 
 export async function getRoomByCode(code: string): Promise<{ snapshot: RoomSnapshot } | null> {
-  const [room] = await db.select({ id: rooms.id }).from(rooms).where(sql`upper(${rooms.code}) = ${code.trim().toUpperCase()}`).limit(1);
+  const [room] = await db.select({ id: rooms.id }).from(rooms).where(eq(rooms.code, code.trim().toUpperCase())).limit(1);
   if (!room) return null;
   const snapshot = await getRoomSnapshot(room.id);
   return snapshot ? { snapshot } : null;

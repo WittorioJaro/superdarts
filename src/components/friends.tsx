@@ -130,7 +130,10 @@ export function OnlineFriends() {
         {conn.online.length ? `Online now, ${conn.online.length}` : "Online now"}
       </h2>
       {conn.online.length === 0 ? (
-        <p className="text-dim">Nobody else has Superdarts open. Friends show up here the moment they do.</p>
+        // Same line either way, so the page doesn't shift once presence connects.
+        <p className="text-dim">
+          {conn.connected ? "Nobody else has Superdarts open. Friends show up here the moment they do." : "Checking who's on…"}
+        </p>
       ) : (
         <ul className="-mx-5 flex gap-3 overflow-x-auto px-5 pb-1 sm:-mx-8 sm:px-8">
           {conn.online.map((f) => (
