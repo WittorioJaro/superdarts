@@ -45,4 +45,3 @@ Page loading (frontend):
 - Home, Practice and Online no longer block on the database. The signed-in player comes from the root layout through a client context, so headers draw immediately; recent games, today's training and your rooms stream in behind Suspense, with skeletons built from the same layout as the content.
 - The profile draws its header after two small queries and streams the nine stats queries behind one boundary. The header rating and the rating chart share one request-cached query.
 - Every route's loading state is built from its page's own layout, so nothing shifts when content arrives.
-- Camera scoring in local games opens a LiveKit connection only when the player turns it on, and the phone sends darts, not video.

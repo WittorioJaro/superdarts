@@ -2,18 +2,17 @@
 
 import {
   LiveKitRoom,
+  VideoTrack,
   useConnectionState,
   useLocalParticipant,
   useParticipantAttributes,
   useRemoteParticipant,
 } from "@livekit/components-react";
-import { ConnectionState, type LocalVideoTrack, Track, VideoPresets, createLocalVideoTrack } from "livekit-client";
+import { ConnectionState, type LocalVideoTrack, Track, VideoPresets } from "livekit-client";
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useState } from "react";
 import { cameraToken } from "@/app/online-actions";
 import { CamIcon, MicIcon } from "@/components/room-video";
 import { MIC_ATTRIBUTE, type CameraSession } from "@/lib/friends-types";
-import type { Calibration } from "@/lib/vision/calibration";
-import { BoardLines, Calibrator, saveCalibration, savedCalibration, useBoardScorer } from "./scorer";
 
 type Facing = "user" | "environment";
 
@@ -60,7 +59,7 @@ function Camera({ token }: { token: string }) {
   }
   if (!started) {
     return (
-      <Message title={`${session.player.name.split(" ")[0]}'s board camera`} body={session.roomCode ? `For room ${session.roomCode}. Friends will see what this phone sees.` : "Scores your darts on the iPad. The picture stays on this phone."}>
+      <Message title={`${session.player.name.split(" ")[0]}'s board camera`} body={`For room ${session.roomCode}. Friends will see what this phone sees.`}>
         <button
           type="button"
           onClick={() => setStarted(true)}
@@ -85,7 +84,14 @@ function Camera({ token }: { token: string }) {
       options={{
         adaptiveStream: false,
         dynacast: true,
-        publishDefaults: { videoSimulcastLayers: [VideoPresets.h360, VideoPresets.h180] },
+        publishDefaults: {
+          // A board is fine detail that barely moves: send 1080p and, when the connection struggles,
+          // drop frames rather than sharpness. H.264 uses the phone's hardware encoder, so it stays cool.
+          videoCodec: "h264",
+          videoEncoding: { maxBitrate: 2_500_000, maxFramerate: 30 },
+          degradationPreference: "maintain-resolution",
+          videoSimulcastLayers: [VideoPresets.h540, VideoPresets.h216],
+        },
         audioCaptureDefaults: { echoCancellation: true, noiseSuppression: false, autoGainControl: true },
       }}
       onDisconnected={() => setEnded(true)}
@@ -96,47 +102,23 @@ function Camera({ token }: { token: string }) {
   );
 }
 
-const STATE_LABEL: Record<string, string> = {
-  off: "Starting…",
-  waiting: "Getting a clear view of the board",
-  watching: "Watching for darts",
-  motion: "Something's moving",
-  settling: "Looking…",
-};
-
 function Live({ session }: { session: CameraSession }) {
-  const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
+  const { localParticipant, cameraTrack, isMicrophoneEnabled } = useLocalParticipant();
   const state = useConnectionState();
   const ipad = useRemoteParticipant(session.player.id);
   const { attributes } = useParticipantAttributes({ participant: ipad });
-  // A local game only needs the darts, so the picture never leaves the phone.
-  const solo = session.roomCode === null;
   const [facing, setFacing] = useState<Facing>("environment");
-  const [track, setTrack] = useState<LocalVideoTrack | null>(null);
-  const [video, setVideo] = useState<HTMLVideoElement | null>(null);
-  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
-  const [calibration, setCalibration] = useState<Calibration | null>(null);
-  const [calibrating, setCalibrating] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const mic = attributes?.[MIC_ATTRIBUTE];
   const wantMic = mic === "phone";
   const [camError, setCamError] = useState<string | null>(null);
   const connected = state === ConnectionState.Connected;
-  const scorer = useBoardScorer(calibrating ? null : video, session.player.id, calibration);
 
   // Started by hand rather than by LiveKitRoom, so a missing or blocked camera shows up here instead of hanging.
   const startCamera = useCallback(async () => {
     setCamError(null);
     try {
-      const t = await createLocalVideoTrack({ facingMode: facing, resolution: VideoPresets.h720.resolution });
-      if (!solo) {
-        // A failed publish must not leave the camera running in the background, or the retry can't get it.
-        await localParticipant.publishTrack(t, { source: Track.Source.Camera }).catch((e) => {
-          t.stop();
-          throw e;
-        });
-      }
-      setTrack(t);
+      await localParticipant.setCameraEnabled(true, { facingMode: facing, resolution: VideoPresets.h1080.resolution });
     } catch (e) {
       const name = e instanceof Error ? e.name : "";
       setCamError(
@@ -147,34 +129,14 @@ function Live({ session }: { session: CameraSession }) {
             : "The camera didn't start. Close other apps using it and try again.",
       );
     }
-  }, [localParticipant, facing, solo]);
+  }, [localParticipant, facing]);
 
   useEffect(() => {
     // Runs once per connection; facing changes go through restartTrack in flip().
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (connected && !track) void startCamera();
+    if (connected && !cameraTrack) void startCamera();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected]);
-  useEffect(() => () => track?.stop(), [track]);
-
-  useEffect(() => {
-    if (!track || !video) return;
-    track.attach(video);
-    const measure = () => video.videoWidth && setSize((s) => (s?.width === video.videoWidth && s.height === video.videoHeight ? s : { width: video.videoWidth, height: video.videoHeight }));
-    video.addEventListener("loadedmetadata", measure);
-    video.addEventListener("resize", measure);
-    return () => {
-      video.removeEventListener("loadedmetadata", measure);
-      video.removeEventListener("resize", measure);
-      track.detach(video);
-    };
-  }, [track, video]);
-
-  // A calibration only fits the resolution it was made at; flipping cameras or rotating needs a new one.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setCalibration(savedCalibration(session.player.id, facing, size));
-  }, [session.player.id, facing, size]);
 
   // The iPad decides which device carries this player's voice.
   useEffect(() => {
@@ -187,40 +149,22 @@ function Live({ session }: { session: CameraSession }) {
   async function flip() {
     const next: Facing = facing === "environment" ? "user" : "environment";
     try {
-      await track?.restartTrack({ facingMode: next, resolution: VideoPresets.h720.resolution });
+      await (cameraTrack?.videoTrack as LocalVideoTrack | undefined)?.restartTrack({ facingMode: next, resolution: VideoPresets.h1080.resolution });
       setFacing(next);
     } catch {
       setProblem("Couldn't switch cameras.");
     }
   }
 
-  const live = connected && !!track;
-  const mirrored = facing === "user";
+  const live = state === ConnectionState.Connected && !!cameraTrack;
 
   return (
     <main className="locked fixed inset-0 flex flex-col bg-black">
-      {track ? (
-        <>
-          <video ref={setVideo} muted playsInline autoPlay className={`absolute inset-0 h-full w-full object-contain ${mirrored ? "-scale-x-100" : ""}`} />
-          {calibration && size && !calibrating && (
-            <svg
-              aria-hidden
-              viewBox={`0 0 ${size.width} ${size.height}`}
-              preserveAspectRatio="xMidYMid meet"
-              className={`pointer-events-none absolute inset-0 h-full w-full ${mirrored ? "-scale-x-100" : ""}`}
-            >
-              <BoardLines calibration={calibration} faint />
-            </svg>
-          )}
-          {scorer.last && !calibrating && (
-            <span
-              key={scorer.last.id}
-              className="animate-pop pointer-events-none absolute inset-x-0 top-1/3 mx-auto w-fit rounded-3xl bg-ink/85 px-8 py-3 font-display text-7xl font-extrabold"
-            >
-              {scorer.last.label}
-            </span>
-          )}
-        </>
+      {cameraTrack ? (
+        <VideoTrack
+          trackRef={{ participant: localParticipant, publication: cameraTrack, source: Track.Source.Camera }}
+          className={`absolute inset-0 h-full w-full object-contain ${facing === "user" ? "-scale-x-100" : ""}`}
+        />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center p-8 text-center text-dim">
           {camError ? (
@@ -233,79 +177,39 @@ function Live({ session }: { session: CameraSession }) {
           ) : connected ? (
             "Starting the camera… If Safari asks, allow it."
           ) : (
-            "Connecting…"
+            "Connecting to the room…"
           )}
         </div>
       )}
 
-      {calibrating && video && size ? (
-        <Calibrator
-          video={video}
-          mirrored={mirrored}
-          onCancel={() => setCalibrating(false)}
-          onDone={(c) => {
-            saveCalibration(session.player.id, facing, c);
-            setCalibration(c);
-            setCalibrating(false);
-          }}
-        />
-      ) : (
-        <>
-          <div className="safe-top relative flex items-start justify-between gap-3 px-4">
-            <span className={`flex items-center gap-2 rounded-full px-4 py-2 font-semibold backdrop-blur ${live ? "bg-double/90" : "bg-ink/70 text-dim"}`}>
-              <span className={`h-2.5 w-2.5 rounded-full ${live ? "animate-pulse bg-chalk" : "bg-dim"}`} />
-              {live ? (solo ? "Connected" : "Live") : state === ConnectionState.Reconnecting ? "Reconnecting…" : "Connecting…"}
-            </span>
-            <span className="rounded-full bg-ink/70 px-4 py-2 text-sm font-medium backdrop-blur">
-              {session.roomCode ? `Room ${session.roomCode}` : "Local game"} · {session.player.name.split(" ")[0]}&apos;s board
-            </span>
-          </div>
+      <div className="safe-top relative flex items-start justify-between gap-3 px-4">
+        <span className={`flex items-center gap-2 rounded-full px-4 py-2 font-semibold backdrop-blur ${live ? "bg-double/90" : "bg-ink/70 text-dim"}`}>
+          <span className={`h-2.5 w-2.5 rounded-full ${live ? "animate-pulse bg-chalk" : "bg-dim"}`} />
+          {live ? "Live" : state === ConnectionState.Reconnecting ? "Reconnecting…" : "Connecting…"}
+        </span>
+        <span className="rounded-full bg-ink/70 px-4 py-2 text-sm font-medium backdrop-blur">
+          Room {session.roomCode} · {session.player.name.split(" ")[0]}&apos;s board
+        </span>
+      </div>
 
-          <div className="safe-bottom relative mt-auto flex flex-col gap-3 px-4">
-            {track && size && (
-              <div className="flex items-center gap-3">
-                {calibration ? (
-                  <>
-                    <span className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl bg-ink/75 px-4 py-3 font-medium backdrop-blur">
-                      <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${scorer.state === "watching" ? "bg-treble" : "bg-brass"}`} />
-                      <span className="truncate">{STATE_LABEL[scorer.state]}</span>
-                    </span>
-                    <button type="button" onClick={() => setCalibrating(true)} className="h-12 shrink-0 rounded-2xl bg-ink/75 px-4 font-semibold backdrop-blur">
-                      Redo setup
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setCalibrating(true)}
-                    className="h-14 flex-1 rounded-2xl bg-brass font-display text-xl font-bold text-ink transition active:scale-[0.98]"
-                  >
-                    Set up scoring
-                  </button>
-                )}
-              </div>
-            )}
-            <div className="flex items-center justify-between gap-3">
-              <span
-                className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium backdrop-blur ${isMicrophoneEnabled ? "bg-chalk text-ink" : "bg-ink/70 text-dim"}`}
-              >
-                <MicIcon off={!isMicrophoneEnabled} />
-                {isMicrophoneEnabled ? "Mic on" : solo || mic === "off" ? "Mic off" : "Mic on the iPad"}
-              </span>
-              <button
-                type="button"
-                onClick={() => void flip()}
-                className="flex h-14 items-center gap-2 rounded-full bg-ink/70 px-5 font-semibold backdrop-blur active:scale-[0.97]"
-              >
-                <CamIcon off={false} />
-                {facing === "environment" ? "Use front camera" : "Use back camera"}
-              </button>
-            </div>
-          </div>
-        </>
-      )}
-      {problem && track && (
-        <p role="alert" className="absolute inset-x-4 bottom-40 rounded-2xl bg-double px-4 py-3 text-center font-medium">
+      <div className="safe-bottom relative mt-auto flex items-center justify-between gap-3 px-4">
+        <span
+          className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium backdrop-blur ${isMicrophoneEnabled ? "bg-chalk text-ink" : "bg-ink/70 text-dim"}`}
+        >
+          <MicIcon off={!isMicrophoneEnabled} />
+          {isMicrophoneEnabled ? "Mic on" : mic === "off" ? "Mic off" : "Mic on the iPad"}
+        </span>
+        <button
+          type="button"
+          onClick={() => void flip()}
+          className="flex h-14 items-center gap-2 rounded-full bg-ink/70 px-5 font-semibold backdrop-blur active:scale-[0.97]"
+        >
+          <CamIcon off={false} />
+          {facing === "environment" ? "Use front camera" : "Use back camera"}
+        </button>
+      </div>
+      {problem && cameraTrack && (
+        <p role="alert" className="absolute inset-x-4 bottom-24 rounded-2xl bg-double px-4 py-3 text-center font-medium">
           {problem}
         </p>
       )}

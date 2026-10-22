@@ -1,7 +1,7 @@
 import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-export type CameraTokenPayload = { r: string; p: string; e: number; k?: undefined } | { k: "solo"; p: string; e: number; r?: never };
+export interface CameraTokenPayload { r: string; p: string; e: number }
 type Verification = { ok: true; payload: CameraTokenPayload } | { ok: false; error: "invalid" | "expired" };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -25,16 +25,13 @@ export function verifyCameraToken(token: string, secret: string, now = Math.floo
     const bytes = Buffer.from(part, "base64url");
     if (bytes.toString("base64url") !== part) return invalid;
     const payload: unknown = JSON.parse(bytes.toString("utf8"));
-    if (!payload || typeof payload !== "object" || !("p" in payload) || !("e" in payload)) return invalid;
-    const { p, e } = payload;
-    const k = "k" in payload ? payload.k : undefined;
-    const r = "r" in payload ? payload.r : undefined;
-    if ((k !== undefined && k !== "solo") || (k === "solo" ? r !== undefined : typeof r !== "string" || !uuid.test(r))
-      || typeof p !== "string" || !uuid.test(p) || typeof e !== "number" || !Number.isSafeInteger(e)) {
+    if (!payload || typeof payload !== "object" || !("r" in payload) || !("p" in payload) || !("e" in payload)) return invalid;
+    const { r, p, e } = payload;
+    if (typeof r !== "string" || !uuid.test(r) || typeof p !== "string" || !uuid.test(p) || typeof e !== "number" || !Number.isSafeInteger(e)) {
       return invalid;
     }
     if (e <= now) return { ok: false, error: "expired" };
-    return { ok: true, payload: k === "solo" ? { k, p, e } : { r: r as string, p, e } };
+    return { ok: true, payload: { r, p, e } };
   } catch {
     return invalid;
   }
