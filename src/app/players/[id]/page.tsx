@@ -86,14 +86,13 @@ export default async function PlayerPage({ params, searchParams }: PageProps<"/p
           )}
           {isMe && (
             <div className="flex gap-2">
+              {admin && <Invites />}
               <EditProfile name={player.name} color={player.color} />
               <SignOut />
             </div>
           )}
         </div>
       </header>
-
-      {admin && <Invites />}
 
       <nav aria-label="Filter stats" className="flex flex-wrap gap-2">
         {(
