@@ -81,7 +81,8 @@ export function Counter() {
   );
 }
 
-function CounterSkeleton() {
+/** Also the route's loading screen, so starting a game goes straight to the scorer's frame. */
+export function CounterSkeleton() {
   return (
     <main aria-busy className="locked safe-top safe-bottom fixed inset-0 flex flex-col gap-3 px-3 sm:px-4">
       <header className="h-12 shrink-0" />

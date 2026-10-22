@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocalParticipant, useMaybeRoomContext } from "@livekit/components-react";
-import { type RemoteParticipant, RoomEvent } from "livekit-client";
+import { ConnectionState, type RemoteParticipant, RoomEvent } from "livekit-client";
 import { type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { dartLabel } from "@/lib/darts/board";
 import { applyBias, createBias, learnCorrection, restoreBias } from "@/lib/vision/bias";
@@ -69,7 +69,10 @@ export function useBoardScorer(video: HTMLVideoElement | null, playerId: string,
     if (running || !room) return;
     const bytes = encodeMessage({ v: 1, kind: "status", calibrated: false, state: "waiting", fps: 0 });
     if (!bytes) return;
-    const ping = () => void localParticipant.publishData(new Uint8Array(bytes), { reliable: true, topic: VISION_TOPIC, destinationIdentities: [playerId] }).catch(() => {});
+    const ping = () => {
+      if (room.state !== ConnectionState.Connected) return;
+      void localParticipant.publishData(new Uint8Array(bytes), { reliable: true, topic: VISION_TOPIC, destinationIdentities: [playerId] }).catch(() => {});
+    };
     ping();
     const id = window.setInterval(ping, 2000);
     return () => clearInterval(id);
@@ -88,6 +91,9 @@ export function useBoardScorer(video: HTMLVideoElement | null, playerId: string,
     let frames = 0, fps = 0, lastTick = performance.now(), lastFrame = 0, handle = 0, stopped = false;
 
     const send = (m: PhoneMessage) => {
+      // LiveKit remembers a failed first attempt to open the data channel and fails every send after it,
+      // so nothing may be sent before the room has connected.
+      if (room.state !== ConnectionState.Connected) return;
       const bytes = encodeMessage(m);
       if (bytes) void localParticipant.publishData(new Uint8Array(bytes), { reliable: true, topic: VISION_TOPIC, destinationIdentities: [playerId] }).catch(() => {});
     };
