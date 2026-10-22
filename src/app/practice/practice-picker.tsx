@@ -113,7 +113,8 @@ export function PracticePicker({ stats }: { stats: Promise<PracticeStats> }) {
   async function start() {
     if (!open || replacesGame()) return;
     gameStore.setPref(`practice:${open.id}`, opts);
-    const { weak } = await stats;
+    // Only the weakness drill is built from stats; the rest start without waiting on the query.
+    const weak = open.id === "weakness" ? (await stats).weak : [];
     startGame({ kind: "practice", mode: open.mode, config: buildConfig(open, opts, weak) as never, players: [me] });
     router.push("/play");
   }
