@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
 import { SUPABASE_KEY, SUPABASE_URL } from "@/lib/supabase/env";
 
-const PUBLIC_PATHS = ["/login", "/auth", "/cam"];
+const PUBLIC_PATHS = ["/login", "/auth", "/cam", "/privacy", "/terms"];
 const NEXT_COOKIE = "sd_next";
 
 /** Keeps the Supabase session fresh and sends signed-out visitors to the login screen. */
@@ -24,7 +24,7 @@ export async function proxy(request: NextRequest) {
   const { data } = await supabase.auth.getClaims();
   const path = request.nextUrl.pathname;
 
-  if (!data?.claims && !PUBLIC_PATHS.some((p) => path.startsWith(p))) {
+  if (!data?.claims && !PUBLIC_PATHS.some((p) => path === p || path.startsWith(`${p}/`))) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.search = "";
