@@ -61,6 +61,17 @@ body {
   overscroll-behavior: none;
 }
 
+/*
+ * Home-screen app with the translucent status bar: iOS sizes 100% as the
+ * screen minus the status bar, leaving a dead strip under the page. 100vh
+ * is the whole screen there. Not in the browser, where it hides under the toolbar.
+ */
+@media (display-mode: standalone) {
+  html {
+    height: 100vh;
+  }
+}
+
 html {
   background: var(--color-ink);
   color: var(--color-chalk);
@@ -103,6 +114,11 @@ a {
 :focus-visible {
   outline: 3px solid var(--color-brass);
   outline-offset: 2px;
+}
+
+/* showModal() focuses the dialog itself; that's not a keyboard focus worth ringing. */
+dialog:focus-visible {
+  outline: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
