@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Pad, TotalPad } from "@/components/pad";
 import { Bone } from "@/components/skeleton";
 import { Sheet } from "@/components/ui";
@@ -89,6 +89,8 @@ function botAt(game: ActiveGame, i: number) {
 }
 
 const BOT_PACE = 650;
+/** A finished game waits this long before saving, so a wrong last dart can still be undone. */
+const AUTOSAVE_MS = 10_000;
 
 function Play({ game }: { game: ActiveGame }) {
   const router = useRouter();
@@ -136,31 +138,61 @@ function Play({ game }: { game: ActiveGame }) {
     return () => clearTimeout(id);
   }, [bot, state, game.config, throwDart]);
 
-  function save() {
-    gameStore.addPending(toPendingSave(game));
+  // Saves happen once per game. Undo is only offered until then, so the saved game never goes stale.
+  const [saved, setSaved] = useState(false);
+  function save(g: ActiveGame = game) {
+    if (saved || g.darts.length === 0) return;
+    setSaved(true);
+    gameStore.addPending(toPendingSave(g));
     void syncPending().then((r) => r.saved && router.refresh());
   }
 
-  function finish() {
-    if (game.darts.length > 0) save();
-    gameStore.setActive(null);
-    if (inPlan) planStore.clear();
+  const over = state.finished || !!game.ended;
+  // A finished game saves by itself after a moment. Undoing the last dart in that moment cancels it.
+  const autosave = state.finished && !saved;
+  useEffect(() => {
+    if (!autosave) return;
+    const id = setTimeout(() => save(), AUTOSAVE_MS);
+    return () => clearTimeout(id);
+    // `save` is a fresh closure each render; `autosave` and the game decide when it runs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autosave, game]);
+  useEffect(() => {
+    if (over) router.prefetch("/");
+  }, [over, router]);
+
+  // The game is cleared only once this screen has gone, so "No game in progress" never flashes up on the way home.
+  // A layout effect, so the home screen's resume banner never paints the old game either.
+  const clearOnLeave = useRef(false);
+  useLayoutEffect(
+    () => () => {
+      if (clearOnLeave.current) gameStore.setActive(null);
+    },
+    [],
+  );
+  function goHome(clear: boolean) {
+    clearOnLeave.current = clear;
     router.push("/");
+  }
+
+  function finish() {
+    save();
+    if (inPlan) planStore.clear();
+    goHome(true);
   }
 
   function nextStep() {
     if (!inPlan) return;
-    if (game.darts.length > 0) save();
+    save();
     startPlanStep(inPlan.steps, inPlan.index + 1, inPlan.player);
   }
   function again() {
-    if (game.darts.length > 0) save();
+    save();
     planStore.clear();
     const players = game.kind === "match" ? [...game.players.slice(1), game.players[0]] : game.players;
     startGame({ kind: game.kind, mode: game.mode, config: freshConfig(game) as never, players });
   }
 
-  const over = state.finished || !!game.ended;
   if (over) {
     return (
       <main className="safe-top safe-bottom flex flex-1 flex-col">
@@ -171,6 +203,8 @@ function Play({ game }: { game: ActiveGame }) {
           onAgain={again}
           onDone={finish}
           onUndo={undo}
+          canUndo={!saved}
+          note={saved ? "Saved to your stats." : state.finished ? "Saves in a few seconds. Undo now if the last dart was wrong." : null}
           plan={inPlan ? { index: inPlan.index, steps: inPlan.steps.map((s) => s.title), onNext: nextStep } : null}
         />
       </main>
@@ -263,14 +297,16 @@ function Play({ game }: { game: ActiveGame }) {
         <LeaveMenu
           game={game}
           onClose={() => setMenu(false)}
-          onPause={() => router.push("/")}
+          onPause={() => goHome(false)}
           onEnd={() => {
             setMenu(false);
-            gameStore.setActive({ ...game, ended: true });
+            const ended = { ...game, ended: true };
+            gameStore.setActive(ended);
+            save(ended);
           }}
           onDiscard={() => {
-            gameStore.setActive(null);
-            router.push("/");
+            setMenu(false);
+            goHome(true);
           }}
         />
       </Sheet>

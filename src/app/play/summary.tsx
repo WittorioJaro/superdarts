@@ -35,7 +35,7 @@ export function Summary({
   onUndo,
   canUndo = true,
   plan,
-  doneLabel = "Save and finish",
+  doneLabel = "Go to home",
   againLabel,
   note,
 }: {
