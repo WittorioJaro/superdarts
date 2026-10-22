@@ -1,8 +1,9 @@
 import type { BotProfile } from "@/lib/darts/bot";
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   index,
   integer,
   jsonb,
@@ -31,6 +32,12 @@ export const players = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
 ).enableRLS();
+
+export const invites = pgTable("invites", {
+  email: text("email").primaryKey(),
+  invitedBy: uuid("invited_by").notNull().references(() => players.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [check("invites_email_normalized", sql`${t.email} = lower(trim(${t.email}))`)]).enableRLS();
 
 export const games = pgTable(
   "games",

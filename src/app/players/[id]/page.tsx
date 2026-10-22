@@ -4,7 +4,7 @@ import { Suspense, cache } from "react";
 import { AverageTrend, BoardHeatmap, DoublesTable, MissBreakdown, PracticeVsMatch, RatingChart, SessionFade, Sparkline } from "@/components/charts";
 import { RecentGames } from "@/components/recent-games";
 import { Avatar, BackLink } from "@/components/ui";
-import { getCurrentPlayer } from "@/lib/auth";
+import { getCurrentAdmin, getCurrentPlayer } from "@/lib/auth";
 import { dartLabel } from "@/lib/darts/board";
 import { gameDetail, gameTitle } from "@/lib/darts/labels";
 import { MODES, type ModeId } from "@/lib/darts/modes";
@@ -25,6 +25,7 @@ import {
 } from "@/lib/queries";
 import { EditProfile } from "./edit-profile";
 import { ProfileStatsSkeleton, Section } from "./profile-skeleton";
+import { Invites } from "./invites";
 import { SignOut } from "./sign-out";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -49,6 +50,7 @@ export default async function PlayerPage({ params, searchParams }: PageProps<"/p
   const [me, player] = await Promise.all([getCurrentPlayer(), getPlayer(id)]);
   if (!player) notFound();
   const isMe = me.id === player.id;
+  const admin = isMe ? await getCurrentAdmin() : null;
 
   const link = (next: { scope?: StatsScope; range?: StatsRange; target?: string }) => {
     const q = new URLSearchParams();
@@ -90,6 +92,8 @@ export default async function PlayerPage({ params, searchParams }: PageProps<"/p
           )}
         </div>
       </header>
+
+      {admin && <Invites />}
 
       <nav aria-label="Filter stats" className="flex flex-wrap gap-2">
         {(

@@ -12,7 +12,7 @@ export async function GET(request: Request) {
   const { data, error } = await supabase.auth.exchangeCodeForSession(code);
   if (error) return NextResponse.redirect(`${origin}/login?error=sign_in_failed`);
 
-  if (!isEmailAllowed(data.user?.email)) {
+  if (!await isEmailAllowed(data.user?.email)) {
     await supabase.auth.signOut();
     return NextResponse.redirect(`${origin}/login?error=not_invited`);
   }

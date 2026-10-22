@@ -36,6 +36,13 @@
       "when": 1792624809676,
       "tag": "0004_minor_cerebro",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792692601795,
+      "tag": "0005_known_siren",
+      "breakpoints": true
     }
   ]
 }
