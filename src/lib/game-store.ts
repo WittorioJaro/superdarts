@@ -39,10 +39,6 @@ export interface PendingSave {
   startedAt: string;
 }
 
-const ACTIVE = "superdarts.active";
-const PENDING = "superdarts.pending";
-const PREFS = "superdarts.prefs";
-
 const listeners = new Set<() => void>();
 const cache = new Map<string, { raw: string | null; value: unknown }>();
 
@@ -74,34 +70,55 @@ function subscribe(listener: () => void) {
   };
 }
 
-export const gameStore = {
-  active: () => read<ActiveGame | null>(ACTIVE, null),
-  setActive: (g: ActiveGame | null) => write(ACTIVE, g),
-  pending: () => read<PendingSave[]>(PENDING, []),
-  addPending(save: PendingSave) {
-    write(PENDING, [...gameStore.pending().filter((p) => p.id !== save.id), save]);
-  },
-  removePending(id: string) {
-    write(PENDING, gameStore.pending().filter((p) => p.id !== id));
-  },
-  prefs: <T,>(key: string, fallback: T) => read<Record<string, unknown>>(PREFS, {})[key] as T ?? fallback,
-  setPref(key: string, value: unknown) {
-    write(PREFS, { ...read<Record<string, unknown>>(PREFS, {}), [key]: value });
-  },
-};
-
 const EMPTY: PendingSave[] = [];
 
-export function useActiveGame() {
-  return useSyncExternalStore(subscribe, gameStore.active, () => null);
+/** A game, its save queue and preferences under one key prefix. A pub table keeps its own, so closing it can wipe everything. */
+function createGameStore(prefix: string) {
+  const ACTIVE = `${prefix}.active`;
+  const PENDING = `${prefix}.pending`;
+  const PREFS = `${prefix}.prefs`;
+  const store = {
+    active: () => read<ActiveGame | null>(ACTIVE, null),
+    setActive: (g: ActiveGame | null) => write(ACTIVE, g),
+    pending: () => read<PendingSave[]>(PENDING, EMPTY),
+    addPending(save: PendingSave) {
+      write(PENDING, [...store.pending().filter((p) => p.id !== save.id), save]);
+    },
+    removePending(id: string) {
+      write(PENDING, store.pending().filter((p) => p.id !== id));
+    },
+    prefs: <T,>(key: string, fallback: T) => read<Record<string, unknown>>(PREFS, {})[key] as T ?? fallback,
+    setPref(key: string, value: unknown) {
+      write(PREFS, { ...read<Record<string, unknown>>(PREFS, {}), [key]: value });
+    },
+    start(game: Omit<ActiveGame, "id" | "darts" | "startedAt">) {
+      store.setActive({ ...game, id: crypto.randomUUID(), darts: [], startedAt: new Date().toISOString() });
+    },
+    /** Removes every trace of this store from the device. */
+    clear() {
+      for (const key of [ACTIVE, PENDING, PREFS]) localStorage.removeItem(key);
+      for (const l of listeners) l();
+    },
+  };
+  return store;
 }
 
-export function usePendingSaves() {
-  return useSyncExternalStore(subscribe, gameStore.pending, () => EMPTY);
+export type GameStore = ReturnType<typeof createGameStore>;
+
+export const gameStore = createGameStore("superdarts");
+/** Games scored on a public device through a table code. Never mixed with the signed-in player's own. */
+export const tableStore = createGameStore("superdarts.table");
+
+export function useActiveGame(store: GameStore = gameStore) {
+  return useSyncExternalStore(subscribe, store.active, () => null);
+}
+
+export function usePendingSaves(store: GameStore = gameStore) {
+  return useSyncExternalStore(subscribe, store.pending, () => EMPTY);
 }
 
 export function startGame(game: Omit<ActiveGame, "id" | "darts" | "startedAt">) {
-  gameStore.setActive({ ...game, id: crypto.randomUUID(), darts: [], startedAt: new Date().toISOString() });
+  gameStore.start(game);
 }
 
 export function toPendingSave(g: ActiveGame): PendingSave {

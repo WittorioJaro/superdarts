@@ -15,9 +15,10 @@ import { type AnyState, type ConfigMap, type StateMap, replay } from "@/lib/dart
 import { CRICKET_NUMBERS } from "@/lib/darts/modes/cricket";
 import { type X01Config, doubleTarget, liveRemaining, visitTotalNeeds } from "@/lib/darts/modes/x01";
 import { BOBS_TARGETS, checkoutTargets, doublesTargets } from "@/lib/darts/modes/practice";
-import { type ActiveGame, type GamePlayer, gameStore, startGame, toPendingSave, useActiveGame } from "@/lib/game-store";
+import { type ActiveGame, type GamePlayer, type GameStore, gameStore, toPendingSave, useActiveGame } from "@/lib/game-store";
+import { SAVE_ERROR } from "@/lib/pub-table-types";
 import { planStore, startPlanStep, usePlan } from "@/lib/plan-store";
-import { syncPending } from "@/lib/sync";
+import { type SyncResult, syncPending } from "@/lib/sync";
 import {
   AroundBoard,
   BobsBoard,
@@ -92,12 +93,17 @@ const BOT_PACE = 650;
 /** A finished game waits this long before saving, so a wrong last dart can still be undone. */
 const AUTOSAVE_MS = 10_000;
 
-function Play({ game }: { game: ActiveGame }) {
+/** Where a game lives and how it's saved. A pub table plays from its own store and returns to its own setup. */
+export type PlayScope = { store: GameStore; sync: () => Promise<SyncResult>; table: boolean };
+const OWN_GAMES: PlayScope = { store: gameStore, sync: syncPending, table: false };
+
+export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: PlayScope }) {
   const router = useRouter();
+  const { store, table } = scope;
   const state = useMemo(() => rebuild(game), [game]);
   const [flash, setFlash] = useState<{ key: number; event: GameEvent } | null>(null);
   const [menu, setMenu] = useState(false);
-  const [entry, setEntry] = useState<"darts" | "total">(() => (game.mode === "x01" ? gameStore.prefs("entry", "darts") : "darts"));
+  const [entry, setEntry] = useState<"darts" | "total">(() => (game.mode === "x01" ? store.prefs("entry", "darts") : "darts"));
   const plan = usePlan();
   const inPlan = plan?.gameId === game.id ? plan : null;
 
@@ -105,11 +111,11 @@ function Play({ game }: { game: ActiveGame }) {
     (d: Dart) => {
       if (state.finished || game.ended) return;
       const next = { ...game, darts: [...game.darts, { ...d, t: Date.now() }] };
-      gameStore.setActive(next);
+      store.setActive(next);
       const ev = rebuild(next).event;
       if (ev && ev.type !== "hit" && ev.type !== "match") setFlash({ key: next.darts.length, event: ev });
     },
-    [game, state.finished],
+    [game, state.finished, store],
   );
 
   // Undo goes back to the last dart a person threw, taking any bot visit with it.
@@ -122,8 +128,8 @@ function Play({ game }: { game: ActiveGame }) {
       if (s.finished || !botAt(game, s.current)) break;
       darts = darts.slice(0, -1);
     }
-    gameStore.setActive({ ...game, ended: false, darts });
-  }, [game]);
+    store.setActive({ ...game, ended: false, darts });
+  }, [game, store]);
 
   // A bot throws its darts one at a time, at a pace you can follow.
   const bot = !state.finished && !game.ended && game.mode === "x01" ? botAt(game, state.current) : null;
@@ -143,8 +149,16 @@ function Play({ game }: { game: ActiveGame }) {
   function save(g: ActiveGame = game) {
     if (saved || g.darts.length === 0) return;
     setSaved(true);
-    gameStore.addPending(toPendingSave(g));
-    void syncPending().then((r) => r.saved && router.refresh());
+    store.addPending(toPendingSave(g));
+    void scope.sync().then((r) => {
+      if (r.saved) router.refresh();
+      // A table closed from the phone, or past its 12 hours, rejects every save. The refresh shows why and
+      // takes this computer back to the code screen, rather than offering rematches that can never be saved.
+      if (table && r.errors.length) {
+        store.setPref(SAVE_ERROR, r.errors[0]);
+        router.refresh();
+      }
+    });
   }
 
   const over = state.finished || !!game.ended;
@@ -158,19 +172,24 @@ function Play({ game }: { game: ActiveGame }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autosave, game]);
   useEffect(() => {
-    if (over) router.prefetch("/");
-  }, [over, router]);
+    if (over && !table) router.prefetch("/");
+  }, [over, router, table]);
 
   // The game is cleared only once this screen has gone, so "No game in progress" never flashes up on the way home.
   // A layout effect, so the home screen's resume banner never paints the old game either.
   const clearOnLeave = useRef(false);
   useLayoutEffect(
     () => () => {
-      if (clearOnLeave.current) gameStore.setActive(null);
+      if (clearOnLeave.current) store.setActive(null);
     },
-    [],
+    [store],
   );
   function goHome(clear: boolean) {
+    // A table's setup is the same page, so clearing the game is how it goes back.
+    if (table) {
+      if (clear) store.setActive(null);
+      return;
+    }
     clearOnLeave.current = clear;
     router.push("/");
   }
@@ -190,7 +209,7 @@ function Play({ game }: { game: ActiveGame }) {
     save();
     planStore.clear();
     const players = game.kind === "match" ? [...game.players.slice(1), game.players[0]] : game.players;
-    startGame({ kind: game.kind, mode: game.mode, config: freshConfig(game) as never, players });
+    store.start({ kind: game.kind, mode: game.mode, ranked: game.ranked, config: freshConfig(game) as never, players });
   }
 
   if (over) {
@@ -202,6 +221,7 @@ function Play({ game }: { game: ActiveGame }) {
           stopped={!!game.ended && !state.finished}
           onAgain={again}
           onDone={finish}
+          doneLabel={table ? "Save and change game" : undefined}
           onUndo={undo}
           canUndo={!saved}
           note={saved ? "Saved to your stats." : state.finished ? "Saves in a few seconds. Undo now if the last dart was wrong." : null}
@@ -219,7 +239,7 @@ function Play({ game }: { game: ActiveGame }) {
 
   function switchEntry(next: "darts" | "total") {
     setEntry(next);
-    gameStore.setPref("entry", next);
+    store.setPref("entry", next);
   }
 
   return (
@@ -297,11 +317,11 @@ function Play({ game }: { game: ActiveGame }) {
         <LeaveMenu
           game={game}
           onClose={() => setMenu(false)}
-          onPause={() => goHome(false)}
+          onPause={table ? null : () => goHome(false)}
           onEnd={() => {
             setMenu(false);
             const ended = { ...game, ended: true };
-            gameStore.setActive(ended);
+            store.setActive(ended);
             save(ended);
           }}
           onDiscard={() => {
@@ -447,7 +467,7 @@ function LeaveMenu({
 }: {
   game: ActiveGame;
   onClose: () => void;
-  onPause: () => void;
+  onPause: (() => void) | null;
   onEnd: () => void;
   onDiscard: () => void;
 }) {
@@ -457,11 +477,15 @@ function LeaveMenu({
       <div className="flex flex-col gap-3">
         <h2 className="font-display text-3xl font-bold">Leave the match?</h2>
         <p className="mb-2 text-dim">
-          It stays on this device. Pick it up again from the home screen. Only finished matches count towards stats.
+          {onPause
+            ? "It stays on this device. Pick it up again from the home screen. Only finished matches count towards stats."
+            : "Only finished matches count towards stats. Abandoning throws this one away."}
         </p>
-        <button type="button" onClick={onPause} className={`${btn} bg-chalk text-ink`}>
-          Pause and go home
-        </button>
+        {onPause && (
+          <button type="button" onClick={onPause} className={`${btn} bg-chalk text-ink`}>
+            Pause and go home
+          </button>
+        )}
         <button type="button" onClick={onDiscard} className={`${btn} border-2 border-double text-double`}>
           Abandon match
         </button>

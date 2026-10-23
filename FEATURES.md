@@ -22,6 +22,7 @@ What Superdarts does today and what's still to build. Update this file in the sa
 | --- | --- | --- |
 | X01 301/501/701, double/single/master out, legs and sets | ✅ | |
 | Cricket | ✅ | Standard and cut-throat |
+| Pub table code: score on a public device without signing in | ✅ | One-time 6-character code from your phone, valid for 10 minutes. The table lasts 12 hours or until closed. Only saves matches between the host's chosen players |
 | Ranked or casual match switch | ✅ | Only ranked 501 matches change ratings |
 | Play a bot with a set average | ✅ | |
 | Play your past self (ghost built from your history) | ✅ | |

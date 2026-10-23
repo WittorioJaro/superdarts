@@ -31,6 +31,9 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
             {message}
           </p>
         )}
+        <Link href="/t" className="text-center text-dim underline-offset-4 hover:text-chalk hover:underline">
+          Got a table code? Score without signing in
+        </Link>
       </div>
       <footer className="text-center text-sm text-dim">
         <p>Invite-only darts with friends.</p>
