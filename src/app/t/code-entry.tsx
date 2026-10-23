@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useState, useTransition } from "react";
 import { redeemTableCode } from "@/app/table-actions";
 import { tableStore } from "@/lib/game-store";
-import { TABLE_CODE_LENGTH, normalizeTableCode } from "@/lib/pub-table-types";
+import { SAVE_ERROR, TABLE_CODE_LENGTH, normalizeTableCode } from "@/lib/pub-table-types";
 
 const ALLOWED = /[^A-HJKMNP-Z2-9]/g;
 
@@ -15,8 +15,12 @@ export function CodeEntry({ logo }: { logo: ReactNode }) {
   const [pending, startTransition] = useTransition();
 
   // Whatever an earlier table left on this device goes, so the next group starts clean.
+  // A game that couldn't be saved before the table closed is still worth saying, once.
   useEffect(() => {
+    const lost = tableStore.prefs<string | null>(SAVE_ERROR, null);
     tableStore.clear();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (lost) setError(`The last game couldn't be saved: ${lost} Make a new code on your phone to keep playing.`);
   }, []);
 
   function submit(value: string) {

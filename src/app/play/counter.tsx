@@ -16,6 +16,7 @@ import { CRICKET_NUMBERS } from "@/lib/darts/modes/cricket";
 import { type X01Config, doubleTarget, liveRemaining, visitTotalNeeds } from "@/lib/darts/modes/x01";
 import { BOBS_TARGETS, checkoutTargets, doublesTargets } from "@/lib/darts/modes/practice";
 import { type ActiveGame, type GamePlayer, type GameStore, gameStore, toPendingSave, useActiveGame } from "@/lib/game-store";
+import { SAVE_ERROR } from "@/lib/pub-table-types";
 import { planStore, startPlanStep, usePlan } from "@/lib/plan-store";
 import { type SyncResult, syncPending } from "@/lib/sync";
 import {
@@ -149,7 +150,15 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
     if (saved || g.darts.length === 0) return;
     setSaved(true);
     store.addPending(toPendingSave(g));
-    void scope.sync().then((r) => r.saved && router.refresh());
+    void scope.sync().then((r) => {
+      if (r.saved) router.refresh();
+      // A table closed from the phone, or past its 12 hours, rejects every save. The refresh shows why and
+      // takes this computer back to the code screen, rather than offering rematches that can never be saved.
+      if (table && r.errors.length) {
+        store.setPref(SAVE_ERROR, r.errors[0]);
+        router.refresh();
+      }
+    });
   }
 
   const over = state.finished || !!game.ended;

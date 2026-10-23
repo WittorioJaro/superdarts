@@ -7,7 +7,7 @@ import { DEFAULT_OPTS, type GameOpts, GameOptions, cricketConfig, x01Config } fr
 import { Avatar, Sheet } from "@/components/ui";
 import { gameDetail } from "@/lib/darts/labels";
 import { tableStore, useActiveGame, usePendingSaves } from "@/lib/game-store";
-import type { TableSession } from "@/lib/pub-table-types";
+import { SAVE_ERROR, type TableSession } from "@/lib/pub-table-types";
 import { createSync } from "@/lib/sync";
 import { CounterSkeleton, Play, type PlayScope } from "../play/counter";
 
@@ -32,7 +32,7 @@ function Setup({ session, logo }: { session: TableSession; logo: ReactNode }) {
   const pending = usePendingSaves(tableStore);
   const [picked, setPicked] = useState<string[]>(() => tableStore.prefs("picked", session.players.map((p) => p.id)));
   const [opts, setOpts] = useState<GameOpts>(() => ({ ...DEFAULT_OPTS, ...tableStore.prefs<Partial<GameOpts>>("opts", {}) }));
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState(() => tableStore.prefs<string | null>(SAVE_ERROR, null));
   const [closing, setClosing] = useState(false);
 
   const flush = useCallback(async () => {
@@ -40,11 +40,14 @@ function Setup({ session, logo }: { session: TableSession; logo: ReactNode }) {
     // The host may have closed the table from their phone; the page then goes back to the code screen.
     if (res.errors.length) {
       setSaveError(res.errors[0]);
+      tableStore.setPref(SAVE_ERROR, res.errors[0]);
       router.refresh();
     }
   }, [router]);
 
   useEffect(() => {
+    // Shown once: the message is in state now, so the store doesn't need it.
+    tableStore.setPref(SAVE_ERROR, null);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void flush();
     window.addEventListener("online", flush);
