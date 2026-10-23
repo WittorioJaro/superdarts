@@ -23,7 +23,7 @@ export function Table({ session, logo }: { session: TableSession; logo: ReactNod
   const game = useActiveGame(tableStore);
   const hydrated = useHydrated();
   if (!hydrated) return <CounterSkeleton />;
-  if (game) return <Play key={game.id} game={game} camera={null} scope={SCOPE} />;
+  if (game) return <Play key={game.id} game={game} scope={SCOPE} />;
   return <Setup session={session} logo={logo} />;
 }
 

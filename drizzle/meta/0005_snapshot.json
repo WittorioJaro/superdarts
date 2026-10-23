@@ -1,5 +1,5 @@
 {
-  "id": "81a6e809-c00a-4f03-a8c6-655c67640f81",
+  "id": "8e15b0c8-8f62-448f-b222-a9269512dc9f",
   "prevId": "635ca793-6810-4e67-8fbd-fb50f3fa8f5f",
   "version": "7",
   "dialect": "postgresql",
@@ -415,6 +415,57 @@
       "checkConstraints": {},
       "isRLSEnabled": true
     },
+    "public.invites": {
+      "name": "invites",
+      "schema": "",
+      "columns": {
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "invited_by": {
+          "name": "invited_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "invites_invited_by_players_id_fk": {
+          "name": "invites_invited_by_players_id_fk",
+          "tableFrom": "invites",
+          "tableTo": "players",
+          "columnsFrom": [
+            "invited_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "invites_email_normalized": {
+          "name": "invites_email_normalized",
+          "value": "\"invites\".\"email\" = lower(trim(\"invites\".\"email\"))"
+        }
+      },
+      "isRLSEnabled": true
+    },
     "public.players": {
       "name": "players",
       "schema": "",
@@ -473,126 +524,6 @@
           "nullsNotDistinct": false,
           "columns": [
             "user_id"
-          ]
-        }
-      },
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": true
-    },
-    "public.pub_tables": {
-      "name": "pub_tables",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "host_id": {
-          "name": "host_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "player_ids": {
-          "name": "player_ids",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "code": {
-          "name": "code",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "code_expires_at": {
-          "name": "code_expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "token_hash": {
-          "name": "token_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "redeemed_at": {
-          "name": "redeemed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "closed_at": {
-          "name": "closed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        }
-      },
-      "indexes": {
-        "pub_tables_host_idx": {
-          "name": "pub_tables_host_idx",
-          "columns": [
-            {
-              "expression": "host_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "pub_tables_host_id_players_id_fk": {
-          "name": "pub_tables_host_id_players_id_fk",
-          "tableFrom": "pub_tables",
-          "tableTo": "players",
-          "columnsFrom": [
-            "host_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "pub_tables_code_unique": {
-          "name": "pub_tables_code_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "code"
-          ]
-        },
-        "pub_tables_token_hash_unique": {
-          "name": "pub_tables_token_hash_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "token_hash"
           ]
         }
       },

@@ -98,11 +98,6 @@ What Superdarts does today and what's still to build. Update this file in the sa
 
 | Feature | Status | Notes |
 | --- | --- | --- |
-| Camera calibration (board centre, rings, perspective) | ✅ | Five taps on the phone (four double-wire points and the bull), then the board is drawn over the picture to check. Saved per phone and resolution |
-| Dart detection by frame difference, tip position to score | ✅ | Runs on the phone, about 12 frames a second. Board-rectified frame difference, tip at the thin end of the dart. No trained model yet; the detector is behind an interface so one can drop in |
-| Assisted scoring: every visit is confirmed on the iPad | ✅ | Each dart shows the camera's pick plus the next likeliest scores as one-tap swaps. Tap a dart to fix it on the pad. Never submits on its own |
-| Learns from corrections | ✅ | A changed guess nudges a bounded per-phone offset, so a camera that reads high gets corrected over time |
-| Camera scoring in local games | ✅ | Phone pairs to a private LiveKit room; only darts are sent, the picture stays on the phone |
-| Fully automatic scoring (no confirm) | 💤 | Only once accuracy on real boards is measured |
-| Multiple cameras for occlusion | 💤 | |
+| Camera scoring | ❌ | Tried and removed. One phone at an angle read too many darts wrong (20, 5, 14 came out as misses) and lost the last dart of a visit, so checking every dart was slower than typing. Reliable scoring needs several fixed cameras and a trained model |
+| Board camera stream quality | ✅ | Phone sends up to 1080p (H.264, 2.5 Mbps, about 1.1 GB an hour per viewer), keeping sharpness over frame rate on a weak connection. iPads ask for the layer that fills their Retina pixels |
 | Paid upgrades (hosted multiplayer, advanced camera scoring) | 💤 | Only if it ever goes beyond friends |

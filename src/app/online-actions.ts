@@ -298,25 +298,6 @@ export async function invitePlayer(roomId: string, playerId: string): Promise<Ro
   });
 }
 
-export async function soloVideoToken(): Promise<RoomActionResult<{ url: string; token: string }>> {
-  const me = await getCurrentPlayer();
-  const url = process.env.LIVEKIT_URL, key = process.env.LIVEKIT_API_KEY, secret = process.env.LIVEKIT_API_SECRET;
-  if (!url || !key || !secret) return { ok: false, error: "video_unavailable" };
-  const token = new AccessToken(key, secret, { identity: me.id, name: me.name, metadata: JSON.stringify({ color: me.color }), ttl: "6h" });
-  token.addGrant({ roomJoin: true, room: `superdarts-solo-${me.id}`, canPublish: true, canPublishSources: [TrackSource.MICROPHONE],
-    canSubscribe: true, canPublishData: true, canUpdateOwnMetadata: true });
-  return { ok: true, url, token: await token.toJwt() };
-}
-
-export async function soloCameraLink(): Promise<RoomActionResult<CameraLink>> {
-  const me = await getCurrentPlayer();
-  const url = process.env.LIVEKIT_URL, key = process.env.LIVEKIT_API_KEY, secret = process.env.LIVEKIT_API_SECRET;
-  if (!url || !key || !secret) return { ok: false, error: "video_unavailable" };
-  const expiry = Math.floor(Date.now() / 1000) + 12 * 60 * 60;
-  const token = signCameraToken({ k: "solo", p: me.id, e: expiry }, secret);
-  return { ok: true, path: `/cam/${token}`, expiresAt: new Date(expiry * 1000).toISOString() };
-}
-
 export async function cameraLink(roomId: string): Promise<RoomActionResult<CameraLink>> {
   const me = await getCurrentPlayer();
   return withRoom<CameraLink>(roomId, me.id, async (_tx, room) => {
@@ -336,17 +317,6 @@ export async function cameraToken(token: string): Promise<RoomActionResult<Camer
   const verified = verifyCameraToken(token, secret);
   if (!verified.ok) return { ok: false, error: verified.error === "expired"
     ? "This camera link has expired. Make a new one on the iPad." : "This camera link is invalid. Make a new one on the iPad." };
-  if (verified.payload.k === "solo") {
-    const playerId = verified.payload.p;
-    const [player] = await db.select().from(players).where(eq(players.id, playerId));
-    if (!player) return { ok: false, error: "This player no longer exists. Make a new camera link on the iPad." };
-    const access = new AccessToken(key, secret, { identity: cameraIdentity(playerId), name: `${player.name}'s camera`,
-      metadata: JSON.stringify({ color: player.color, camera: true }), ttl: "6h" });
-    access.addGrant({ roomJoin: true, room: `superdarts-solo-${playerId}`, canPublish: true,
-      canPublishSources: [TrackSource.CAMERA, TrackSource.MICROPHONE], canSubscribe: true, canPublishData: true });
-    return { ok: true, url, token: await access.toJwt(), roomCode: null,
-      player: { id: player.id, name: player.name, color: player.color, avatarUrl: player.avatarUrl } };
-  }
   const { r: roomId, p: playerId } = verified.payload;
   return withRoom<CameraSession>(roomId, playerId, async (tx, room) => {
     requireRoom(room.status !== "closed", "The room has closed.");
@@ -356,7 +326,7 @@ export async function cameraToken(token: string): Promise<RoomActionResult<Camer
       metadata: JSON.stringify({ color: player.color, camera: true }), ttl: "6h" });
     access.addGrant({ roomJoin: true, room: `superdarts-${roomId}`, canPublish: true,
       // Subscribe is granted so the phone sees the iPad's `mic` attribute; it connects with autoSubscribe off, so no media flows to it.
-      canPublishSources: [TrackSource.CAMERA, TrackSource.MICROPHONE], canSubscribe: true, canPublishData: true });
+      canPublishSources: [TrackSource.CAMERA, TrackSource.MICROPHONE], canSubscribe: true, canPublishData: false });
     return { ok: true, url, token: await access.toJwt(), roomCode: room.code,
       player: { id: player.id, name: player.name, color: player.color, avatarUrl: player.avatarUrl } };
   });

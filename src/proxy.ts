@@ -3,7 +3,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { SUPABASE_KEY, SUPABASE_URL } from "@/lib/supabase/env";
 
 // `/t` is the pub table: a one-time code from a signed-in phone is its only way in.
-const PUBLIC_PATHS = ["/login", "/auth", "/cam", "/t"];
+const PUBLIC_PATHS = ["/login", "/auth", "/cam", "/privacy", "/terms", "/t"];
 const NEXT_COOKIE = "sd_next";
 
 /** Keeps the Supabase session fresh and sends signed-out visitors to the login screen. */

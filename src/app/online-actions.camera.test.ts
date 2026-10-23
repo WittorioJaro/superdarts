@@ -25,8 +25,7 @@ vi.mock("livekit-server-sdk", () => ({
     async toJwt() { return "test-jwt"; }
   },
 }));
-import { cameraLink, cameraToken, soloCameraLink, soloVideoToken } from "./online-actions";
-import { signCameraToken, verifyCameraToken } from "../lib/camera-token";
+import { cameraLink, cameraToken } from "./online-actions";
 
 beforeEach(() => {
   vi.stubEnv("LIVEKIT_URL", "wss://livekit.test"); vi.stubEnv("LIVEKIT_API_KEY", "key"); vi.stubEnv("LIVEKIT_API_SECRET", "secret");
@@ -43,39 +42,15 @@ beforeEach(() => {
 });
 
 describe("camera server actions", () => {
-  it("grants solo iPad microphone/data and pairs a phone in the same private room", async () => {
-    expect((await soloVideoToken()).ok).toBe(true);
-    expect(mocks.identities).toEqual([mocks.me.id]);
-    expect(mocks.grants[0]).toMatchObject({ room: `superdarts-solo-${mocks.me.id}`, canPublishData: true, canPublishSources: ["microphone"] });
-    const link = await soloCameraLink(); expect(link.ok).toBe(true);
-    if (!link.ok) return;
-    const token = link.path.slice("/cam/".length);
-    expect(verifyCameraToken(token, "secret")).toMatchObject({ ok: true, payload: { k: "solo", p: mocks.me.id } });
-    const session = await cameraToken(token);
-    expect(session).toMatchObject({ ok: true, roomCode: null, player: { id: mocks.me.id } });
-    expect(mocks.identities[1]).toBe(`${mocks.me.id}:cam`);
-    expect(mocks.grants[1]).toMatchObject({ room: mocks.grants[0].room, canPublishData: true, canPublishSources: ["camera", "microphone"] });
-    expect(mocks.transaction).not.toHaveBeenCalled();
-  });
-  it("preserves room authorization and enables camera data publication", async () => {
+  it("checks room membership and lets the phone publish only its camera and mic", async () => {
     const link = await cameraLink(mocks.room.id); expect(link.ok).toBe(true);
     if (!link.ok) return;
     expect(await cameraToken(link.path.slice("/cam/".length))).toMatchObject({ ok: true, roomCode: mocks.room.code });
-    expect(mocks.grants[0]).toMatchObject({ room: `superdarts-${mocks.room.id}`, canPublishData: true });
+    expect(mocks.grants[0]).toMatchObject({ room: `superdarts-${mocks.room.id}`, canPublishData: false });
     expect(mocks.transaction).toHaveBeenCalledTimes(2);
   });
-  it("rejects a missing solo player and invalid bearer before minting grants", async () => {
-    mocks.lookup.mockResolvedValue([]);
-    const token = signCameraToken({ k: "solo", p: mocks.me.id, e: Math.floor(Date.now() / 1000) + 60 }, "secret");
-    expect((await cameraToken(token)).ok).toBe(false);
-    expect((await cameraToken("malformed")).ok).toBe(false); expect(mocks.grants).toHaveLength(0);
-  });
-  it("requires sign-in for both solo actions and handles unconfigured LiveKit", async () => {
-    mocks.currentPlayer.mockRejectedValue(new Error("login required"));
-    await expect(soloVideoToken()).rejects.toThrow("login required"); await expect(soloCameraLink()).rejects.toThrow("login required");
-    mocks.currentPlayer.mockResolvedValue(mocks.me); vi.stubEnv("LIVEKIT_API_SECRET", "");
-    expect(await soloVideoToken()).toEqual({ ok: false, error: "video_unavailable" });
-    expect(await soloCameraLink()).toEqual({ ok: false, error: "video_unavailable" });
+  it("rejects an invalid camera link before minting grants", async () => {
+    expect((await cameraToken("malformed")).ok).toBe(false);
     expect(mocks.grants).toHaveLength(0);
   });
 });

@@ -3,18 +3,27 @@ import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { db } from "@/db";
-import { type Player, players } from "@/db/schema";
+import { type Player, invites, players } from "@/db/schema";
 import { createClient } from "@/lib/supabase/server";
 import { pickColor } from "@/lib/colors";
 
-/** Optional comma-separated list of emails allowed in. Empty means anyone with a Google account. */
-export function isEmailAllowed(email: string | undefined) {
-  const list = (process.env.ALLOWED_EMAILS ?? "")
-    .split(",")
-    .map((e) => e.trim().toLowerCase())
-    .filter(Boolean);
-  return list.length === 0 || (!!email && list.includes(email.toLowerCase()));
+function emailList(value: string | undefined) {
+  return (value ?? "").split(",").map((email) => email.trim().toLowerCase()).filter(Boolean);
 }
+
+export function isAdminEmail(email: string | undefined) {
+  return !!email && emailList(process.env.ADMIN_EMAILS).includes(email.trim().toLowerCase());
+}
+
+/** Empty ALLOWED_EMAILS keeps sign-in open to anyone with a Google account. */
+export const isEmailAllowed = cache(async (email: string | undefined): Promise<boolean> => {
+  const list = emailList(process.env.ALLOWED_EMAILS);
+  if (list.length === 0) return true;
+  if (!email) return false;
+  const normalized = email.trim().toLowerCase();
+  if (list.includes(normalized) || isAdminEmail(normalized)) return true;
+  return !!await db.query.invites.findFirst({ columns: { email: true }, where: eq(invites.email, normalized) });
+});
 
 const getClaims = cache(async () => {
   const supabase = await createClient();
@@ -26,7 +35,7 @@ const getClaims = cache(async () => {
 export const getCurrentPlayer = cache(async (): Promise<Player> => {
   const claims = await getClaims();
   if (!claims?.sub) redirect("/login");
-  if (!isEmailAllowed(claims.email)) redirect("/login?error=not_invited");
+  if (!await isEmailAllowed(claims.email)) redirect("/login?error=not_invited");
 
   const existing = await db.query.players.findFirst({ where: eq(players.userId, claims.sub) });
   if (existing) return existing;
@@ -45,6 +54,12 @@ export const getCurrentPlayer = cache(async (): Promise<Player> => {
 /** Like getCurrentPlayer, but null instead of redirecting. For the root layout, which also renders the login page. */
 export const getSignedInPlayer = cache(async (): Promise<Player | null> => {
   const claims = await getClaims();
-  if (!claims?.sub || !isEmailAllowed(claims.email)) return null;
+  if (!claims?.sub || !await isEmailAllowed(claims.email)) return null;
+  return getCurrentPlayer();
+});
+
+export const getCurrentAdmin = cache(async (): Promise<Player | null> => {
+  const claims = await getClaims();
+  if (!claims?.sub || !isAdminEmail(claims.email)) return null;
   return getCurrentPlayer();
 });

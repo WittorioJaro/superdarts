@@ -19,6 +19,9 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
         <div>
           <h1 className="font-display text-6xl font-extrabold tracking-tight">Superdarts</h1>
           <p className="mt-2 text-lg text-dim">Scores, practice and stats for our darts nights.</p>
+          <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-dim">
+            Keep score for friendly darts matches, plan practice sessions, follow your progress and play together in online rooms with optional live board cameras.
+          </p>
         </div>
       </div>
       <div className="flex w-full max-w-sm flex-col gap-4">
@@ -32,6 +35,13 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
           Got a table code? Score without signing in
         </Link>
       </div>
+      <footer className="text-center text-sm text-dim">
+        <p>Invite-only darts with friends.</p>
+        <nav aria-label="Legal" className="mt-2 flex justify-center gap-5">
+          <Link href="/privacy" className="underline underline-offset-4 transition hover:text-chalk">Privacy policy</Link>
+          <Link href="/terms" className="underline underline-offset-4 transition hover:text-chalk">Terms of service</Link>
+        </nav>
+      </footer>
     </main>
   );
 }

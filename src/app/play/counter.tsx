@@ -2,14 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { CameraButton, useCameraScoring } from "@/components/camera-scoring";
-import { useMe } from "@/components/me";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Pad, TotalPad } from "@/components/pad";
-import { SoloVideo } from "@/components/room-video";
 import { Bone } from "@/components/skeleton";
 import { Sheet } from "@/components/ui";
-import { VisitTray } from "@/components/visit-tray";
 import { type BotModel, botDart } from "@/lib/darts/bot";
 import { isCheckoutPossible } from "@/lib/darts/checkout";
 import { type Dart, visitTotal } from "@/lib/darts/board";
@@ -44,9 +40,6 @@ function useHydrated() {
 export function Counter() {
   const game = useActiveGame();
   const hydrated = useHydrated();
-  const me = useMe();
-  // The preference lives in localStorage, which the server render can't touch; that render is the skeleton anyway.
-  const [camera, setCamera] = useState<boolean>(() => typeof window !== "undefined" && gameStore.prefs("camera-scoring", false));
   // The game lives in this device's storage, so the server can only draw the scorer's frame.
   if (!hydrated) return <CounterSkeleton />;
   if (!game) {
@@ -60,25 +53,7 @@ export function Counter() {
       </main>
     );
   }
-  // Always the same tree, so Play never remounts (and loses its state) when the profile arrives.
-  return (
-    <SoloVideo meId={me?.id ?? ""} enabled={!!me && camera}>
-      <Play
-        key={game.id}
-        game={game}
-        camera={
-          me && {
-            meId: me.id,
-            enabled: camera,
-            set: (on) => {
-              setCamera(on);
-              gameStore.setPref("camera-scoring", on);
-            },
-          }
-        }
-      />
-    </SoloVideo>
-  );
+  return <Play key={game.id} game={game} />;
 }
 
 /** Also the route's loading screen, so starting a game goes straight to the scorer's frame. */
@@ -114,14 +89,14 @@ function botAt(game: ActiveGame, i: number) {
 }
 
 const BOT_PACE = 650;
-
-type CameraSetting = { meId: string; enabled: boolean; set: (on: boolean) => void };
+/** A finished game waits this long before saving, so a wrong last dart can still be undone. */
+const AUTOSAVE_MS = 10_000;
 
 /** Where a game lives and how it's saved. A pub table plays from its own store and returns to its own setup. */
 export type PlayScope = { store: GameStore; sync: () => Promise<SyncResult>; table: boolean };
 const OWN_GAMES: PlayScope = { store: gameStore, sync: syncPending, table: false };
 
-export function Play({ game, camera, scope = OWN_GAMES }: { game: ActiveGame; camera: CameraSetting | null; scope?: PlayScope }) {
+export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: PlayScope }) {
   const router = useRouter();
   const { store, table } = scope;
   const state = useMemo(() => rebuild(game), [game]);
@@ -141,29 +116,6 @@ export function Play({ game, camera, scope = OWN_GAMES }: { game: ActiveGame; ca
     },
     [game, state.finished, store],
   );
-
-  // A confirmed visit goes in as one write. Each dart still gets its own time stamp, and the
-  // biggest call (bust, 180, leg) is flashed once.
-  const throwDarts = useCallback(
-    (ds: Dart[]) => {
-      let next = game;
-      let event: GameEvent | null = null;
-      for (const d of ds) {
-        if (rebuild(next).finished) break;
-        next = { ...next, darts: [...next.darts, { ...d, t: Date.now() }] };
-        const ev = rebuild(next).event;
-        if (ev && ev.type !== "hit" && ev.type !== "match") event = ev;
-      }
-      const taken = next.darts.length - game.darts.length;
-      if (!taken) return 0;
-      store.setActive(next);
-      if (event) setFlash({ key: next.darts.length, event });
-      return taken;
-    },
-    [game, store],
-  );
-  const botTurn = !state.finished && !game.ended && game.mode === "x01" && !!botAt(game, state.current);
-  const cam = useCameraScoring(camera?.meId ?? "", throwDarts, !botTurn && !state.finished && !game.ended);
 
   // Undo goes back to the last dart a person threw, taking any bot visit with it.
   const undo = useCallback(() => {
@@ -191,32 +143,66 @@ export function Play({ game, camera, scope = OWN_GAMES }: { game: ActiveGame; ca
     return () => clearTimeout(id);
   }, [bot, state, game.config, throwDart]);
 
-  function save() {
-    store.addPending(toPendingSave(game));
+  // Saves happen once per game. Undo is only offered until then, so the saved game never goes stale.
+  const [saved, setSaved] = useState(false);
+  function save(g: ActiveGame = game) {
+    if (saved || g.darts.length === 0) return;
+    setSaved(true);
+    store.addPending(toPendingSave(g));
     void scope.sync().then((r) => r.saved && router.refresh());
   }
 
+  const over = state.finished || !!game.ended;
+  // A finished game saves by itself after a moment. Undoing the last dart in that moment cancels it.
+  const autosave = state.finished && !saved;
+  useEffect(() => {
+    if (!autosave) return;
+    const id = setTimeout(() => save(), AUTOSAVE_MS);
+    return () => clearTimeout(id);
+    // `save` is a fresh closure each render; `autosave` and the game decide when it runs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autosave, game]);
+  useEffect(() => {
+    if (over && !table) router.prefetch("/");
+  }, [over, router, table]);
+
+  // The game is cleared only once this screen has gone, so "No game in progress" never flashes up on the way home.
+  // A layout effect, so the home screen's resume banner never paints the old game either.
+  const clearOnLeave = useRef(false);
+  useLayoutEffect(
+    () => () => {
+      if (clearOnLeave.current) store.setActive(null);
+    },
+    [store],
+  );
+  function goHome(clear: boolean) {
+    // A table's setup is the same page, so clearing the game is how it goes back.
+    if (table) {
+      if (clear) store.setActive(null);
+      return;
+    }
+    clearOnLeave.current = clear;
+    router.push("/");
+  }
+
   function finish() {
-    if (game.darts.length > 0) save();
-    store.setActive(null);
+    save();
     if (inPlan) planStore.clear();
-    // A table's setup is the same page, so clearing the game is enough.
-    if (!table) router.push("/");
+    goHome(true);
   }
 
   function nextStep() {
     if (!inPlan) return;
-    if (game.darts.length > 0) save();
+    save();
     startPlanStep(inPlan.steps, inPlan.index + 1, inPlan.player);
   }
   function again() {
-    if (game.darts.length > 0) save();
+    save();
     planStore.clear();
     const players = game.kind === "match" ? [...game.players.slice(1), game.players[0]] : game.players;
     store.start({ kind: game.kind, mode: game.mode, ranked: game.ranked, config: freshConfig(game) as never, players });
   }
 
-  const over = state.finished || !!game.ended;
   if (over) {
     return (
       <main className="safe-top safe-bottom flex flex-1 flex-col">
@@ -228,6 +214,8 @@ export function Play({ game, camera, scope = OWN_GAMES }: { game: ActiveGame; ca
           onDone={finish}
           doneLabel={table ? "Save and change game" : undefined}
           onUndo={undo}
+          canUndo={!saved}
+          note={saved ? "Saved to your stats." : state.finished ? "Saves in a few seconds. Undo now if the last dart was wrong." : null}
           plan={inPlan ? { index: inPlan.index, steps: inPlan.steps.map((s) => s.title), onNext: nextStep } : null}
         />
       </main>
@@ -238,8 +226,7 @@ export function Play({ game, camera, scope = OWN_GAMES }: { game: ActiveGame; ca
   const { targets, quick } = aimFor(game, state);
   // Totals are entered a whole visit at a time, so the switch only works between visits.
   const visitOpen = state.open !== null && state.turns[state.open].darts.length > 0;
-  // Camera darts are entered one by one, so the tray always uses the dart pad.
-  const useTotals = game.mode === "x01" && entry === "total" && !visitOpen && !cam.active;
+  const useTotals = game.mode === "x01" && entry === "total" && !visitOpen;
 
   function switchEntry(next: "darts" | "total") {
     setEntry(next);
@@ -263,34 +250,24 @@ export function Play({ game, camera, scope = OWN_GAMES }: { game: ActiveGame; ca
           <span className="font-display text-2xl font-bold">{gameTitle(game.mode, config)}</span>
           <span className="ml-3 text-dim">{inPlan ? `Training ${inPlan.index + 1} of ${inPlan.steps.length}` : headerDetail(game, state)}</span>
         </p>
-        <div className="flex shrink-0 items-center gap-2">
-          {camera && (
-            <CameraButton
-              enabled={camera.enabled}
-              onEnabled={camera.set}
-              status={cam.status}
-              onReset={() => cam.send({ v: 1, kind: "reset" })}
-            />
-          )}
-          {game.mode === "x01" && !cam.active ? (
-            <div className="flex rounded-xl bg-cabinet p-1" role="group" aria-label="Enter scores as">
-              {(["darts", "total"] as const).map((e) => (
-                <button
-                  key={e}
-                  type="button"
-                  aria-pressed={entry === e}
-                  disabled={visitOpen && e === "total"}
-                  onClick={() => switchEntry(e)}
-                  className={`h-10 rounded-lg px-3 font-medium transition disabled:opacity-40 ${entry === e ? "bg-chalk text-ink" : "text-dim hover:text-chalk"}`}
-                >
-                  {e === "darts" ? "Darts" : "Total"}
-                </button>
-              ))}
-            </div>
-          ) : (
-            !camera && <span className="w-24" />
-          )}
-        </div>
+        {game.mode === "x01" ? (
+          <div className="flex rounded-xl bg-cabinet p-1" role="group" aria-label="Enter scores as">
+            {(["darts", "total"] as const).map((e) => (
+              <button
+                key={e}
+                type="button"
+                aria-pressed={entry === e}
+                disabled={visitOpen && e === "total"}
+                onClick={() => switchEntry(e)}
+                className={`h-10 rounded-lg px-3 font-medium transition disabled:opacity-40 ${entry === e ? "bg-chalk text-ink" : "text-dim hover:text-chalk"}`}
+              >
+                {e === "darts" ? "Darts" : "Total"}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <span className="w-24" />
+        )}
       </header>
 
       <div className="grid min-h-0 flex-1 gap-3 portrait:grid-rows-[minmax(0,1fr)_minmax(0,1.15fr)] landscape:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
@@ -319,19 +296,6 @@ export function Play({ game, camera, scope = OWN_GAMES }: { game: ActiveGame; ca
               onUndo={undo}
               canUndo={game.darts.length > 0}
             />
-          ) : cam.active ? (
-            <div className="flex h-full flex-col gap-2">
-              <VisitTray tray={cam.tray} game={game} watching={!!cam.status?.calibrated} onConfirm={cam.confirm} />
-              <div className="min-h-0 flex-1">
-                <Pad
-                  onDart={cam.tray.pad}
-                  onUndo={() => cam.undo(undo)}
-                  canUndo={cam.tray.darts.length > 0 || game.darts.length > 0}
-                  targets={targets}
-                  quick={quick}
-                />
-              </div>
-            </div>
           ) : (
             <Pad onDart={throwDart} onUndo={undo} canUndo={game.darts.length > 0} targets={targets} quick={quick} />
           )}
@@ -344,14 +308,16 @@ export function Play({ game, camera, scope = OWN_GAMES }: { game: ActiveGame; ca
         <LeaveMenu
           game={game}
           onClose={() => setMenu(false)}
-          onPause={table ? null : () => router.push("/")}
+          onPause={table ? null : () => goHome(false)}
           onEnd={() => {
             setMenu(false);
-            store.setActive({ ...game, ended: true });
+            const ended = { ...game, ended: true };
+            store.setActive(ended);
+            save(ended);
           }}
           onDiscard={() => {
-            store.setActive(null);
-            if (!table) router.push("/");
+            setMenu(false);
+            goHome(true);
           }}
         />
       </Sheet>

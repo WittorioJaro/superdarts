@@ -38,7 +38,7 @@ export interface CameraLink {
 export interface CameraSession {
   url: string;
   token: string;
-  roomCode: string | null;
+  roomCode: string;
   player: GamePlayer;
 }
 

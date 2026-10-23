@@ -70,8 +70,8 @@ export interface RoomConnection {
   pending: number;
   /** Last rejected action, in plain words. Cleared on the next successful one. */
   error: string | null;
-  /** False when it was ignored: not this player's turn, an undo in flight, or the game is over. */
-  throwDart(dart: Dart): boolean;
+  /** Ignored unless it's this player's turn. */
+  throwDart(dart: Dart): void;
   /** Takes back this player's last dart if it's the latest in the game. */
   undo(): void;
   refresh(): Promise<void>;
