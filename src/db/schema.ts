@@ -175,3 +175,16 @@ export const roomDarts = pgTable("room_darts", {
   dart: jsonb("dart").$type<import("@/lib/darts/board").Dart>().notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [primaryKey({ columns: [t.roomId, t.gameId, t.seq] })]).enableRLS();
+
+export const pubTables = pgTable("pub_tables", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  hostId: uuid("host_id").notNull().references(() => players.id),
+  playerIds: jsonb("player_ids").$type<string[]>().notNull(),
+  code: text("code").unique(),
+  codeExpiresAt: timestamp("code_expires_at", { withTimezone: true }).notNull(),
+  tokenHash: text("token_hash").unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  redeemedAt: timestamp("redeemed_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+}, (t) => [index("pub_tables_host_idx").on(t.hostId)]).enableRLS();
