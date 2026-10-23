@@ -19,9 +19,9 @@ import { type AnyState, type ConfigMap, type StateMap, replay } from "@/lib/dart
 import { CRICKET_NUMBERS } from "@/lib/darts/modes/cricket";
 import { type X01Config, doubleTarget, liveRemaining, visitTotalNeeds } from "@/lib/darts/modes/x01";
 import { BOBS_TARGETS, checkoutTargets, doublesTargets } from "@/lib/darts/modes/practice";
-import { type ActiveGame, type GamePlayer, gameStore, startGame, toPendingSave, useActiveGame } from "@/lib/game-store";
+import { type ActiveGame, type GamePlayer, type GameStore, gameStore, toPendingSave, useActiveGame } from "@/lib/game-store";
 import { planStore, startPlanStep, usePlan } from "@/lib/plan-store";
-import { syncPending } from "@/lib/sync";
+import { type SyncResult, syncPending } from "@/lib/sync";
 import {
   AroundBoard,
   BobsBoard,
@@ -117,12 +117,17 @@ const BOT_PACE = 650;
 
 type CameraSetting = { meId: string; enabled: boolean; set: (on: boolean) => void };
 
-function Play({ game, camera }: { game: ActiveGame; camera: CameraSetting | null }) {
+/** Where a game lives and how it's saved. A pub table plays from its own store and returns to its own setup. */
+export type PlayScope = { store: GameStore; sync: () => Promise<SyncResult>; table: boolean };
+const OWN_GAMES: PlayScope = { store: gameStore, sync: syncPending, table: false };
+
+export function Play({ game, camera, scope = OWN_GAMES }: { game: ActiveGame; camera: CameraSetting | null; scope?: PlayScope }) {
   const router = useRouter();
+  const { store, table } = scope;
   const state = useMemo(() => rebuild(game), [game]);
   const [flash, setFlash] = useState<{ key: number; event: GameEvent } | null>(null);
   const [menu, setMenu] = useState(false);
-  const [entry, setEntry] = useState<"darts" | "total">(() => (game.mode === "x01" ? gameStore.prefs("entry", "darts") : "darts"));
+  const [entry, setEntry] = useState<"darts" | "total">(() => (game.mode === "x01" ? store.prefs("entry", "darts") : "darts"));
   const plan = usePlan();
   const inPlan = plan?.gameId === game.id ? plan : null;
 
@@ -130,11 +135,11 @@ function Play({ game, camera }: { game: ActiveGame; camera: CameraSetting | null
     (d: Dart) => {
       if (state.finished || game.ended) return;
       const next = { ...game, darts: [...game.darts, { ...d, t: Date.now() }] };
-      gameStore.setActive(next);
+      store.setActive(next);
       const ev = rebuild(next).event;
       if (ev && ev.type !== "hit" && ev.type !== "match") setFlash({ key: next.darts.length, event: ev });
     },
-    [game, state.finished],
+    [game, state.finished, store],
   );
 
   // A confirmed visit goes in as one write. Each dart still gets its own time stamp, and the
@@ -151,11 +156,11 @@ function Play({ game, camera }: { game: ActiveGame; camera: CameraSetting | null
       }
       const taken = next.darts.length - game.darts.length;
       if (!taken) return 0;
-      gameStore.setActive(next);
+      store.setActive(next);
       if (event) setFlash({ key: next.darts.length, event });
       return taken;
     },
-    [game],
+    [game, store],
   );
   const botTurn = !state.finished && !game.ended && game.mode === "x01" && !!botAt(game, state.current);
   const cam = useCameraScoring(camera?.meId ?? "", throwDarts, !botTurn && !state.finished && !game.ended);
@@ -170,8 +175,8 @@ function Play({ game, camera }: { game: ActiveGame; camera: CameraSetting | null
       if (s.finished || !botAt(game, s.current)) break;
       darts = darts.slice(0, -1);
     }
-    gameStore.setActive({ ...game, ended: false, darts });
-  }, [game]);
+    store.setActive({ ...game, ended: false, darts });
+  }, [game, store]);
 
   // A bot throws its darts one at a time, at a pace you can follow.
   const bot = !state.finished && !game.ended && game.mode === "x01" ? botAt(game, state.current) : null;
@@ -187,15 +192,16 @@ function Play({ game, camera }: { game: ActiveGame; camera: CameraSetting | null
   }, [bot, state, game.config, throwDart]);
 
   function save() {
-    gameStore.addPending(toPendingSave(game));
-    void syncPending().then((r) => r.saved && router.refresh());
+    store.addPending(toPendingSave(game));
+    void scope.sync().then((r) => r.saved && router.refresh());
   }
 
   function finish() {
     if (game.darts.length > 0) save();
-    gameStore.setActive(null);
+    store.setActive(null);
     if (inPlan) planStore.clear();
-    router.push("/");
+    // A table's setup is the same page, so clearing the game is enough.
+    if (!table) router.push("/");
   }
 
   function nextStep() {
@@ -207,7 +213,7 @@ function Play({ game, camera }: { game: ActiveGame; camera: CameraSetting | null
     if (game.darts.length > 0) save();
     planStore.clear();
     const players = game.kind === "match" ? [...game.players.slice(1), game.players[0]] : game.players;
-    startGame({ kind: game.kind, mode: game.mode, config: freshConfig(game) as never, players });
+    store.start({ kind: game.kind, mode: game.mode, ranked: game.ranked, config: freshConfig(game) as never, players });
   }
 
   const over = state.finished || !!game.ended;
@@ -220,6 +226,7 @@ function Play({ game, camera }: { game: ActiveGame; camera: CameraSetting | null
           stopped={!!game.ended && !state.finished}
           onAgain={again}
           onDone={finish}
+          doneLabel={table ? "Save and change game" : undefined}
           onUndo={undo}
           plan={inPlan ? { index: inPlan.index, steps: inPlan.steps.map((s) => s.title), onNext: nextStep } : null}
         />
@@ -236,7 +243,7 @@ function Play({ game, camera }: { game: ActiveGame; camera: CameraSetting | null
 
   function switchEntry(next: "darts" | "total") {
     setEntry(next);
-    gameStore.setPref("entry", next);
+    store.setPref("entry", next);
   }
 
   return (
@@ -337,14 +344,14 @@ function Play({ game, camera }: { game: ActiveGame; camera: CameraSetting | null
         <LeaveMenu
           game={game}
           onClose={() => setMenu(false)}
-          onPause={() => router.push("/")}
+          onPause={table ? null : () => router.push("/")}
           onEnd={() => {
             setMenu(false);
-            gameStore.setActive({ ...game, ended: true });
+            store.setActive({ ...game, ended: true });
           }}
           onDiscard={() => {
-            gameStore.setActive(null);
-            router.push("/");
+            store.setActive(null);
+            if (!table) router.push("/");
           }}
         />
       </Sheet>
@@ -485,7 +492,7 @@ function LeaveMenu({
 }: {
   game: ActiveGame;
   onClose: () => void;
-  onPause: () => void;
+  onPause: (() => void) | null;
   onEnd: () => void;
   onDiscard: () => void;
 }) {
@@ -495,11 +502,15 @@ function LeaveMenu({
       <div className="flex flex-col gap-3">
         <h2 className="font-display text-3xl font-bold">Leave the match?</h2>
         <p className="mb-2 text-dim">
-          It stays on this device. Pick it up again from the home screen. Only finished matches count towards stats.
+          {onPause
+            ? "It stays on this device. Pick it up again from the home screen. Only finished matches count towards stats."
+            : "Only finished matches count towards stats. Abandoning throws this one away."}
         </p>
-        <button type="button" onClick={onPause} className={`${btn} bg-chalk text-ink`}>
-          Pause and go home
-        </button>
+        {onPause && (
+          <button type="button" onClick={onPause} className={`${btn} bg-chalk text-ink`}>
+            Pause and go home
+          </button>
+        )}
         <button type="button" onClick={onDiscard} className={`${btn} border-2 border-double text-double`}>
           Abandon match
         </button>

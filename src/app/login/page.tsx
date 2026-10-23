@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { BoardMark } from "@/components/board-mark";
 import { GoogleButton } from "./google-button";
 
@@ -27,6 +28,9 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
             {message}
           </p>
         )}
+        <Link href="/t" className="text-center text-dim underline-offset-4 hover:text-chalk hover:underline">
+          Got a table code? Score without signing in
+        </Link>
       </div>
     </main>
   );
