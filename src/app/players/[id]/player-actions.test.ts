@@ -47,9 +47,15 @@ it("keeps players who have saved games", async () => {
   expect(mocks.remove).not.toHaveBeenCalled();
 });
 
-it("deletes a player without history and reports foreign key conflicts", async () => {
+it("keeps players on a live pub table", async () => {
+  mocks.count.mockResolvedValueOnce(0).mockResolvedValueOnce(1);
+  expect(await deletePlayer(GUEST)).toEqual({ ok: false, error: "They're on an open pub table. Close it first." });
+  expect(mocks.remove).not.toHaveBeenCalled();
+});
+
+it("deletes a player without history, with their dead tables, and reports foreign key conflicts", async () => {
   expect(await deletePlayer(GUEST)).toEqual({ ok: true });
-  expect(mocks.remove).toHaveBeenCalledOnce();
+  expect(mocks.remove).toHaveBeenCalledTimes(2);
   mocks.remove.mockRejectedValueOnce(Object.assign(new Error("query failed"), { cause: { code: "23503" } }));
   expect((await deletePlayer(GUEST)).ok).toBe(false);
 });

@@ -1,6 +1,6 @@
 "use server";
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, not, or, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { db } from "@/db";
@@ -9,6 +9,11 @@ import { getCurrentAdmin } from "@/lib/auth";
 
 const idSchema = z.uuid();
 const nameSchema = z.string().trim().min(1).max(40);
+
+/** Same as the host's list of open tables: an unused code that hasn't expired, or a live session.
+ *  expires_at is null until the code is redeemed; coalesce it so `not(liveTable)` never comes out null. */
+const liveTable = and(isNull(pubTables.closedAt), or(and(isNull(pubTables.tokenHash), gt(pubTables.codeExpiresAt, sql`now()`)),
+  gt(sql`coalesce(${pubTables.expiresAt}, '-infinity'::timestamptz)`, sql`now()`)))!;
 
 function changed() {
   revalidatePath("/", "layout");
@@ -40,10 +45,15 @@ export async function deletePlayer(id: unknown) {
     if (!player) return "That player no longer exists.";
     const played = await tx.$count(gamePlayers, eq(gamePlayers.playerId, parsed.data));
     if (played) return `They've played ${played} saved ${played === 1 ? "game" : "games"}, so they can't be deleted.`;
-    const atTable = await tx.$count(pubTables, sql`${pubTables.closedAt} is null and ${pubTables.playerIds} @> ${JSON.stringify([parsed.data])}::jsonb`);
+    const atTable = await tx.$count(pubTables, and(liveTable, or(eq(pubTables.hostId, parsed.data),
+      sql`${pubTables.playerIds} @> ${JSON.stringify([parsed.data])}::jsonb`)));
     if (atTable) return "They're on an open pub table. Close it first.";
     try {
-      await tx.transaction(async (sp) => { await sp.delete(players).where(eq(players.id, parsed.data)); });
+      await tx.transaction(async (sp) => {
+        // Closed or expired tables they hosted can't be used again, and would otherwise block the delete.
+        await sp.delete(pubTables).where(and(eq(pubTables.hostId, parsed.data), not(liveTable)));
+        await sp.delete(players).where(eq(players.id, parsed.data));
+      });
     } catch (e) {
       if (foreignKeyViolation(e)) return "They're still linked to a room, table or invite, so they can't be deleted.";
       throw e;
