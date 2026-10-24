@@ -42,7 +42,7 @@ src/db/schema.ts      Drizzle schema
 cp .env.example .env.local
 ```
 
-Fill in the Supabase URL, the publishable key and the database connection strings. Find them in the Supabase dashboard under **Connect**. Set `ALLOWED_EMAILS` to your group's Google addresses to restrict sign-in; leaving it empty allows anyone with a Google account. Set `ADMIN_EMAILS=wiktor.jaro@gmail.com` (comma-separated for multiple admins). Admins are always allowed to sign in and can add or revoke invited Google addresses from the Invites section on their own profile. Invites also grant access when `ALLOWED_EMAILS` is restricted; revoking an invite does not override either environment list. No email is sent: copy the invite message and share it yourself.
+Fill in the Supabase URL, the publishable key and the database connection strings. Find them in the Supabase dashboard under **Connect**. Set `ALLOWED_EMAILS` to your group's Google addresses to restrict sign-in; leaving it empty allows anyone with a Google account. Set `ADMIN_EMAILS=wiktor.jaro@gmail.com` (comma-separated for multiple admins). Admins are always allowed to sign in and can add or revoke invited Google addresses from the Invites section on their own profile. The Players section there lets them rename anyone and delete players who haven't saved a game. Invites also grant access when `ALLOWED_EMAILS` is restricted; revoking an invite does not override either environment list. No email is sent: copy the invite message and share it yourself.
 
 If the Google OAuth consent screen is in **Testing** mode, invitees must also be added as test users in Google Cloud. App invites do not bypass that restriction.
 
