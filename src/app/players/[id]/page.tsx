@@ -26,6 +26,7 @@ import {
 import { EditProfile } from "./edit-profile";
 import { ProfileStatsSkeleton, Section } from "./profile-skeleton";
 import { Invites } from "./invites";
+import { ManagePlayers } from "./manage-players";
 import { SignOut } from "./sign-out";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -86,6 +87,7 @@ export default async function PlayerPage({ params, searchParams }: PageProps<"/p
           )}
           {isMe && (
             <div className="flex gap-2">
+              {admin && <ManagePlayers />}
               {admin && <Invites />}
               <EditProfile name={player.name} color={player.color} />
               <SignOut />

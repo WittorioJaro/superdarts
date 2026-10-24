@@ -8,9 +8,22 @@ import { type BotModel, levelModel } from "@/lib/darts/bot";
 import { replay, type AnyConfig, type ModeId } from "@/lib/darts/modes";
 import { type StatTurn, scoringStats, cricketMpr } from "@/lib/darts/stats";
 
+/** Players with a Google account. Guests are one-off and only show up in the games they played. */
 export async function listPlayers() {
   return db
     .select({ id: players.id, name: players.name, color: players.color, avatarUrl: players.avatarUrl, userId: players.userId })
+    .from(players)
+    .where(isNotNull(players.userId))
+    .orderBy(asc(players.name));
+}
+
+/** Everyone but bots, for the admin player list. */
+export async function listAllPlayers() {
+  return db
+    .select({
+      id: players.id, name: players.name, color: players.color, avatarUrl: players.avatarUrl, userId: players.userId,
+      games: sql<number>`(select count(*)::int from ${gamePlayers} where ${gamePlayers.playerId} = ${players.id})`,
+    })
     .from(players)
     .where(isNull(players.bot))
     .orderBy(asc(players.name));
@@ -369,7 +382,7 @@ export async function leaderboard(range: StatsRange): Promise<{
 }[]> {
   const [people, totals, stats] = await Promise.all([
     db.select({ playerId: players.id, name: players.name, color: players.color, avatarUrl: players.avatarUrl, rating: ratings.rating, rd: ratings.rd })
-      .from(players).leftJoin(ratings, eq(ratings.playerId, players.id)).where(isNull(players.bot)),
+      .from(players).leftJoin(ratings, eq(ratings.playerId, players.id)).where(isNotNull(players.userId)),
     db.select({ playerId: gamePlayers.playerId, matches: sql<number>`count(*)::int`, wins: sql<number>`count(*) filter (where ${gamePlayers.winner})::int` })
       .from(gamePlayers).innerJoin(games, eq(games.id, gamePlayers.gameId))
       .where(and(eq(games.kind, "match"), noBots(), sinceRange(range))).groupBy(gamePlayers.playerId),

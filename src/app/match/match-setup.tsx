@@ -239,7 +239,7 @@ export function MatchSetup({ players: initial, meId }: { players: GamePlayer[]; 
         >
           <h2 className="font-display text-3xl font-bold">Add player</h2>
           <p className="text-dim">
-            For friends without an account yet. Their games are saved under this name.
+            For a friend without an account. They play under this name for now but won&apos;t join the player list. To stay on it, they sign in with Google.
           </p>
           <label className="flex flex-col gap-2">
             <span className="text-sm font-medium text-dim">Name</span>

@@ -69,7 +69,7 @@ What Superdarts does today and what's still to build. Update this file in the sa
 
 | Feature | Status | Notes |
 | --- | --- | --- |
-| Profiles for every friend, guest players | ✅ | |
+| Profiles for every friend, guest players | ✅ | Only Google accounts join the player list; guests are one-off |
 | Leaderboard (average, checkout, best checkout, 180s, rating) | ✅ | Players list today shows average and wins only |
 | Head-to-head (record, streak, side-by-side stats) | ✅ | |
 | Glicko-2 rating for 501 | ✅ | |
