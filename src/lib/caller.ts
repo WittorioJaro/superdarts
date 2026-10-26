@@ -1,45 +1,117 @@
-import { isPossibleVisitTotal } from "./darts/board";
-import { isCheckoutPossible } from "./darts/checkout";
-import type { X01Config, X01State } from "./darts/modes/x01";
+import { useSyncExternalStore } from "react";
+import { allCalls } from "./caller-calls";
 
 /** Matches CALLER_VERSION in scripts/generate-caller.ts; the files under it never change. */
-const BASE = "/caller/v1/";
+const BASE = "/caller/v2/";
 
-/** What the caller says once the dart just thrown has closed a visit, in order. Nothing while a visit is still open. */
-export function visitCalls(state: X01State, config: X01Config): string[] {
-  if (state.open !== null) return [];
-  const turn = state.turns.at(-1);
-  if (!turn) return [];
-  const ev = state.event;
-  if (ev?.type === "match") return ["game-shot-match"];
-  if (ev?.type === "set") return ["game-shot-set", "game-on"];
-  if (ev?.type === "leg") return ["game-shot-leg", "game-on"];
-  const calls = [turn.bust ? "bust" : `score-${turn.points}`];
-  // Like at the oche, the next player hears what they need when they step up on a finish.
-  const left = state.remaining[state.current];
-  if (left >= 2 && left <= 170 && isCheckoutPossible(left, 3, config.out)) calls.push(`require-${left}`);
-  return calls;
+export type CallerSettings = { on: boolean; volume: number };
+const KEY = "superdarts.caller";
+const DEFAULTS: CallerSettings = { on: true, volume: 0.8 };
+
+// The caller belongs to the device, not to a player or a pub table, so it keeps its own key.
+let settings: CallerSettings | null = null;
+const listeners = new Set<() => void>();
+
+function readSettings(): CallerSettings {
+  if (settings) return settings;
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<CallerSettings>;
+    settings = {
+      on: typeof saved.on === "boolean" ? saved.on : DEFAULTS.on,
+      volume: typeof saved.volume === "number" ? Math.min(1, Math.max(0, saved.volume)) : DEFAULTS.volume,
+    };
+  } catch {
+    settings = DEFAULTS;
+  }
+  return settings;
 }
 
-/** Every line a game can call, for warming the cache before the first visit. */
-export function allCalls(): string[] {
-  const ids = ["game-on", "bust", "game-shot-leg", "game-shot-set", "game-shot-match"];
-  for (let n = 0; n <= 180; n++) if (isPossibleVisitTotal(n)) ids.push(`score-${n}`);
-  for (let n = 2; n <= 170; n++) ids.push(`require-${n}`);
-  return ids;
+function subscribe(l: () => void) {
+  listeners.add(l);
+  const other = (e: StorageEvent) => {
+    if (e.key !== KEY) return;
+    settings = null;
+    l();
+  };
+  window.addEventListener("storage", other);
+  return () => {
+    listeners.delete(l);
+    window.removeEventListener("storage", other);
+  };
 }
+
+export function useCallerSettings(): CallerSettings {
+  return useSyncExternalStore(subscribe, readSettings, () => DEFAULTS);
+}
+
+export function setCallerSettings(patch: Partial<CallerSettings>) {
+  settings = { ...readSettings(), ...patch };
+  localStorage.setItem(KEY, JSON.stringify(settings));
+  if (gain) gain.gain.value = loudness(settings.volume);
+  if (!settings.on) hush();
+  for (const l of listeners) l();
+}
+
+/** Ears hear loudness roughly logarithmically; squaring makes the slider's middle sound like the middle. */
+const loudness = (volume: number) => volume * volume;
 
 let ctx: AudioContext | null = null;
+let gain: GainNode | null = null;
 let playing: AudioBufferSourceNode[] = [];
 /** Bumped by every new call and by hush(), so a call that's still loading knows it's been overtaken. */
 let generation = 0;
 const GAP_S = 0.25;
 const SILENCE = 0.01;
 
-function context(): AudioContext | null {
+type AudioSessionNavigator = Navigator & { audioSession?: { type: string } };
+let rooms = 0;
+
+/**
+ * Web Audio on iPhones plays like a ringtone and goes quiet with the silent switch. Asking for "playback"
+ * (Safari 17+) makes it play like a video instead. Android already plays it on the media volume.
+ */
+function claimSession() {
+  const session = (navigator as AudioSessionNavigator).audioSession;
+  if (session) session.type = rooms > 0 ? "auto" : "playback";
+}
+
+/**
+ * A room's video call needs the microphone, which the "playback" session would take from it. While a room is
+ * open the caller plays as ordinary page audio instead. Returns the release.
+ */
+export function holdSessionForRoom(): () => void {
+  rooms++;
+  if (ctx) claimSession();
+  return () => {
+    rooms--;
+    if (ctx) claimSession();
+  };
+}
+
+function context(): { c: AudioContext; out: GainNode } | null {
   if (typeof window === "undefined" || !("AudioContext" in window)) return null;
-  ctx ??= new AudioContext();
-  return ctx;
+  if (!ctx) {
+    claimSession();
+    ctx = new AudioContext();
+    gain = ctx.createGain();
+    gain.gain.value = loudness(readSettings().volume);
+    gain.connect(ctx.destination);
+  }
+  return { c: ctx, out: gain! };
+}
+
+if (typeof window !== "undefined") {
+  // Calls for a bot's or a friend's darts don't come from a tap, and phones only start audio from one. Any tap
+  // wakes it, so it's ready for them.
+  window.addEventListener(
+    "pointerdown",
+    () => {
+      if (!readSettings().on) return;
+      const audio = context();
+      if (audio?.c.state === "suspended") void audio.c.resume();
+    },
+    { capture: true, passive: true },
+  );
 }
 
 /** A missing or broken clip is just silence; the game never waits on the caller. */
@@ -69,8 +141,10 @@ function audible(buf: AudioBuffer): { start: number; end: number } {
  * caused it: phones only let a page start sound from inside a tap.
  */
 export function say(ids: string[]) {
-  const c = context();
-  if (!c || ids.length === 0) return;
+  if (ids.length === 0 || !readSettings().on) return;
+  const audio = context();
+  if (!audio) return;
+  const { c, out } = audio;
   hush();
   const mine = generation;
   if (c.state === "suspended") void c.resume();
@@ -85,7 +159,7 @@ export function say(ids: string[]) {
       const { start, end } = audible(buf);
       const src = c.createBufferSource();
       src.buffer = buf;
-      src.connect(c.destination);
+      src.connect(out);
       at = Math.max(at, c.currentTime);
       src.start(at, start, end - start);
       playing.push(src);

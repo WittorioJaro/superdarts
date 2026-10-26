@@ -6,6 +6,7 @@
  *   pnpm caller:generate                                # everything not recorded yet
  *
  * Existing files are kept unless --force is passed, so re-recording one bad take is `--only <id> --force`.
+ * `--out <dir>` records somewhere else, for auditioning takes before they replace the real ones.
  * The files are served as immutable, so changing a voice or a line for good means bumping CALLER_VERSION
  * here and in src/lib/caller.ts.
  */
@@ -13,10 +14,10 @@ import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ElevenLabsClient } from "@elevenlabs/elevenlabs-js";
 
-const CALLER_VERSION = "v1";
+const CALLER_VERSION = "v2";
 const VOICE_ID = "OpxYdhzUTqYdJ2tc6800"; // "Dart Announcer"
 const MODEL_ID = "eleven_v4";
-const OUT_DIR = join(import.meta.dirname, "..", "public", "caller", CALLER_VERSION);
+const PUBLIC_DIR = join(import.meta.dirname, "..", "public", "caller", CALLER_VERSION);
 
 const ONES = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
   "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"];
@@ -48,7 +49,8 @@ function scoreLine(n: number): Line {
   if (n === 180) {
     return {
       id,
-      text: "[shouting, ecstatic, drawn out like a stadium darts caller] ONE HUNDRED... AND EIGHTYYYYYYYYY!!!",
+      // No ellipsis: it makes the model breathe between "hundred" and "eighty". The call is one scream.
+      text: "[screaming at the top of his lungs in one unbroken breath] ONE HUNDRED AND EIGHTYYYYYYYYYYYY!!!",
       stability: 0.2,
     };
   }
@@ -105,6 +107,8 @@ async function main() {
   const flag = (name: string) => args.includes(name);
   const onlyAt = args.indexOf("--only");
   const only = onlyAt >= 0 ? new Set(args[onlyAt + 1]?.split(",")) : null;
+  const outAt = args.indexOf("--out");
+  const OUT_DIR = outAt >= 0 ? args[outAt + 1] : PUBLIC_DIR;
 
   const lines = only ? LINES.filter((l) => only.has(l.id)) : LINES;
   if (only) for (const id of only) if (!LINES.some((l) => l.id === id)) throw new Error(`Unknown line "${id}"`);

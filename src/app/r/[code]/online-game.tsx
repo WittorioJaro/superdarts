@@ -1,11 +1,14 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { closeRoom, finishRoomGame, rematchRoom } from "@/app/online-actions";
+import { CallerButton } from "@/components/caller-settings";
 import { Pad, TotalPad } from "@/components/pad";
 import { MediaControls, VideoStrip, VideoTile, useHasCamera } from "@/components/room-video";
 import { Sheet } from "@/components/ui";
+import { holdSessionForRoom, hush, say, useCallerSettings, warmCaller } from "@/lib/caller";
+import { callsFor } from "@/lib/caller-calls";
 import { isCheckoutPossible } from "@/lib/darts/checkout";
 import { type Dart, visitTotal } from "@/lib/darts/board";
 import { gameTitle } from "@/lib/darts/labels";
@@ -59,6 +62,26 @@ export function OnlineGame({ conn, me }: { conn: RoomConnection; me: GamePlayer 
     setSeen(game.darts.length);
   }
   const ev = flashAt === game.darts.length ? state.event : null;
+
+  // Every board hears every visit called, its own and the others'. A dart taken back silences the call.
+  const called = useRef(game.darts.length);
+  useEffect(() => {
+    const n = game.darts.length;
+    if (n > called.current) say(callsFor(game.mode, state as never, game.config as never));
+    else if (n < called.current) hush();
+    called.current = n;
+  }, [game, state]);
+  const calling = useCallerSettings().on;
+  useEffect(() => {
+    if (!calling) return;
+    if (called.current === 0) say(["game-on"]);
+    const stop = warmCaller();
+    return () => {
+      stop();
+      hush();
+    };
+  }, [calling, live.id]);
+  useEffect(() => holdSessionForRoom(), []);
   const flash = ev && ev.type !== "hit" && ev.type !== "match" ? ev : null;
 
   const [menu, setMenu] = useState(false);
@@ -155,6 +178,7 @@ export function OnlineGame({ conn, me }: { conn: RoomConnection; me: GamePlayer 
         <div className="flex shrink-0 items-center gap-2">
           <SyncState conn={conn} />
           <MediaControls compact />
+          <CallerButton className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl hover:bg-cabinet" />
           {game.mode === "x01" && (
             <div className="flex rounded-xl bg-cabinet p-1" role="group" aria-label="Enter scores as">
               {(["darts", "total"] as const).map((e) => (

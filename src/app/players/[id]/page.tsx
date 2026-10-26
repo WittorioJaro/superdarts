@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense, cache } from "react";
 import { AverageTrend, BoardHeatmap, DoublesTable, MissBreakdown, PracticeVsMatch, RatingChart, SessionFade, Sparkline } from "@/components/charts";
+import { CallerButton } from "@/components/caller-settings";
 import { RecentGames } from "@/components/recent-games";
 import { Avatar, BackLink } from "@/components/ui";
 import { getCurrentAdmin, getCurrentPlayer } from "@/lib/auth";
@@ -86,10 +87,11 @@ export default async function PlayerPage({ params, searchParams }: PageProps<"/p
             </Link>
           )}
           {isMe && (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               {admin && <ManagePlayers />}
               {admin && <Invites />}
               <EditProfile name={player.name} color={player.color} />
+              <CallerButton label="Sound" className="flex h-11 items-center gap-2 rounded-xl bg-cabinet px-4 font-medium text-dim hover:bg-felt hover:text-chalk" />
               <SignOut />
             </div>
           )}

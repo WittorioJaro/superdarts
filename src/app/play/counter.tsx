@@ -6,7 +6,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import { Pad, TotalPad } from "@/components/pad";
 import { Bone } from "@/components/skeleton";
 import { Sheet } from "@/components/ui";
-import { hush, say, visitCalls, warmCaller } from "@/lib/caller";
+import { CallerButton } from "@/components/caller-settings";
+import { hush, say, useCallerSettings, warmCaller } from "@/lib/caller";
+import { callsFor } from "@/lib/caller-calls";
 import { type BotModel, botDart } from "@/lib/darts/bot";
 import { isCheckoutPossible } from "@/lib/darts/checkout";
 import { type Dart, visitTotal } from "@/lib/darts/board";
@@ -105,8 +107,7 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
   const [flash, setFlash] = useState<{ key: number; event: GameEvent } | null>(null);
   const [menu, setMenu] = useState(false);
   const [entry, setEntry] = useState<"darts" | "total">(() => (game.mode === "x01" ? store.prefs("entry", "darts") : "darts"));
-  const [callerOn, setCallerOn] = useState(() => store.prefs("caller", true));
-  const calling = callerOn && game.mode === "x01";
+  const calling = useCallerSettings().on;
   const plan = usePlan();
   const inPlan = plan?.gameId === game.id ? plan : null;
 
@@ -118,9 +119,9 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
       const after = rebuild(next);
       const ev = after.event;
       if (ev && ev.type !== "hit" && ev.type !== "match") setFlash({ key: next.darts.length, event: ev });
-      if (calling) say(visitCalls(after as StateMap["x01"], game.config as X01Config));
+      say(callsFor(game.mode, after as never, game.config as never));
     },
-    [game, state.finished, store, calling],
+    [game, state.finished, store],
   );
 
   // Undo goes back to the last dart a person threw, taking any bot visit with it.
@@ -150,13 +151,6 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
     // Only a new game or switching the caller on should say "Game on", not every dart.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [calling, game.id]);
-
-  function toggleCaller() {
-    const on = !callerOn;
-    setCallerOn(on);
-    store.setPref("caller", on);
-    if (on) say(["game-on"]);
-  }
 
   // A bot throws its darts one at a time, at a pace you can follow.
   const bot = !state.finished && !game.ended && game.mode === "x01" ? botAt(game, state.current) : null;
@@ -283,21 +277,7 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
             </svg>
             <span className="font-medium">{game.kind === "match" ? "Leave" : "End"}</span>
           </button>
-          {game.mode === "x01" && (
-            <button
-              type="button"
-              onClick={toggleCaller}
-              aria-pressed={callerOn}
-              aria-label="Caller"
-              title={callerOn ? "Caller on" : "Caller off"}
-              className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl hover:bg-cabinet ${callerOn ? "text-chalk" : "text-dim"}`}
-            >
-              <svg aria-hidden width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" />
-                {callerOn ? <path d="M15.5 9a4.5 4.5 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" /> : <path d="m16 9.5 5 5m0-5-5 5" />}
-              </svg>
-            </button>
-          )}
+          <CallerButton className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl hover:bg-cabinet" />
         </div>
         <p className="truncate text-center">
           <span className="font-display text-2xl font-bold">{gameTitle(game.mode, config)}</span>

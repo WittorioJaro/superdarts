@@ -39,7 +39,8 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
+  // The caller's clips are public files that pub tables need without a session, so they skip the proxy too.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|icon|apple-icon|pwa-icon|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|icon|apple-icon|pwa-icon|caller/|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };
