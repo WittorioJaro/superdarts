@@ -87,6 +87,8 @@ describe("visit totals", () => {
     expect(s.finished).toBe(true);
     expect(threeDartAverage(s.turns)).toBe(150);
     expect(visitTotalNeeds(x01Init({ ...x, startScore: 100 }, 1), x, 100)).toEqual({ darts: true, atDouble: true });
+    expect(visitTotalNeeds(x01Init({ ...x, startScore: 100 }, 1), x, 60)).toEqual({ darts: false, atDouble: false });
+    expect(visitTotalNeeds(x01Init({ ...x, startScore: 100 }, 1), x, 0)).toEqual({ darts: false, atDouble: false });
   });
   it("records physical dart counts, unknown attempts and real timestamps without fabricated landings", () => {
     const r = buildRecords("x01", x, ["p"], [{ ...T(20), t: 1000 }, S(20), S(20), visitTotal(100, { atDouble: 1 })]);

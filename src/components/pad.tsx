@@ -131,8 +131,8 @@ export function Pad({
 type TotalOpts = { darts?: 1 | 2 | 3; atDouble?: number };
 
 /**
- * Type the visit's total instead of each dart. When the total finishes the leg, or the
- * player was on a finish, it asks the one or two questions the stats need.
+ * Type the visit's total instead of each dart. When the total finishes the leg, it asks
+ * the one or two questions the stats need.
  */
 export function TotalPad({
   onTotal,

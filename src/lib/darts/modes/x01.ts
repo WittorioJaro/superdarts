@@ -145,8 +145,9 @@ export function x01Results(state: X01State, config: X01Config): PlayerResult[] {
 /** Questions needed before accepting a whole visit; totals only start at a visit boundary. */
 export function visitTotalNeeds(state: X01State, config: X01Config, total: number): { darts: boolean; atDouble: boolean } {
   const remaining = liveRemaining(state, state.current);
-  return { darts: total === remaining && isCheckoutPossible(remaining, 3, config.out),
-    atDouble: config.out !== "single" && remaining <= 170 && isCheckoutPossible(remaining, 3, "double") };
+  // Only a finishing visit asks; a missed finish records no darts at a double.
+  const finishes = total === remaining && isCheckoutPossible(remaining, 3, config.out);
+  return { darts: finishes, atDouble: finishes && config.out !== "single" };
 }
 
 function applyVisitTotal(state: X01State, dart: Dart, config: X01Config) {
