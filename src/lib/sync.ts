@@ -6,6 +6,8 @@ import type { SaveResult } from "./persist-game";
 
 export interface SyncResult {
   saved: number;
+  /** The games that reached the server, with the darts they were saved with. */
+  savedGames: PendingSave[];
   errors: string[];
 }
 
@@ -14,11 +16,14 @@ export function createSync(store: GameStore, save: (game: PendingSave) => Promis
   let running: Promise<SyncResult> | null = null;
   return (): Promise<SyncResult> => {
     running ??= (async () => {
-      const result: SyncResult = { saved: 0, errors: [] };
+      const result: SyncResult = { saved: 0, savedGames: [], errors: [] };
       for (const pending of store.pending()) {
         try {
           const res = await save(pending);
-          if (res.ok) result.saved++;
+          if (res.ok) {
+            result.saved++;
+            result.savedGames.push(pending);
+          }
           else if (!res.retry) result.errors.push(res.error);
           if (res.ok || !res.retry) store.removePending(pending.id);
         } catch {

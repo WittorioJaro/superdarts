@@ -70,6 +70,14 @@ describe("ranked game persistence", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it("saves a match ended early as stopped, without a winner or a rating change", async () => {
+    const { tx, writes, execute } = connection();
+    expect(await persistGame({ ...input, darts: input.darts.slice(0, 5) }, ids[0], tx)).toEqual({ ok: true });
+    expect(writes[0]).toMatchObject({ table: games, rows: { status: "stopped", winnerId: null, ranked: false } });
+    expect(writes.some((w) => w.table === ratings || w.table === ratingChanges)).toBe(false);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("still stores individual darts in bounded batches", async () => {
     const { tx, writes } = connection(false, [ids[0]]);
     const practice: SaveGameInput = { ...input, kind: "practice", ranked: false, mode: "scoring", config: { rounds: 0 },

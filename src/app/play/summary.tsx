@@ -61,8 +61,8 @@ export function Summary({
 
   let headline: string;
   let sub: string;
-  if (isMatch && winner) {
-    headline = `${winner.name.split(" ")[0]} wins`;
+  if (isMatch && (winner || stopped)) {
+    headline = winner ? `${winner.name.split(" ")[0]} wins` : "No winner";
     sub = game.players.map((_, i) => (Number(config.sets) > 1 ? res[i].setsWon : res[i].legsWon)).join("–");
     const points = (state as StateMap["cricket"]).points;
     if (game.mode === "cricket" && Number(config.legs) === 1 && points?.some((p) => p > 0)) sub = `${sub}, ${points.join("–")} on points`;
@@ -89,7 +89,7 @@ export function Summary({
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-5 pt-4 sm:px-8">
       <div className="text-center">
-        <p className="text-lg text-dim">{stopped ? "Session ended" : isMatch ? "Game shot" : "Finished"}</p>
+        <p className="text-lg text-dim">{stopped ? (isMatch ? "Match ended early" : "Session ended") : isMatch ? "Game shot" : "Finished"}</p>
         <h1 className="font-display text-7xl font-extrabold tracking-tight sm:text-8xl">{headline}</h1>
         <p className="mt-2 font-display text-3xl font-semibold text-brass">{sub}</p>
       </div>

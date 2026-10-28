@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, useSyncExternalStore, useTransition } from "react";
 import { addGuest } from "@/app/actions";
 import { closeHostTable, createTableCode, listHostTables } from "@/app/table-actions";
@@ -173,18 +174,26 @@ export function HostTable({ players: initial, meId, open: initialOpen }: { playe
                     <span className="block truncate font-semibold">{t.players.map((p) => p.name.split(" ")[0]).join(", ")}</span>
                     <span className="block text-sm text-dim">{t.expiresAt && hydrated ? `Open until ${time(t.expiresAt)}` : "Open"}</span>
                   </span>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => close(t.id)}
-                    className="h-11 shrink-0 rounded-xl border-2 border-double px-4 font-semibold text-double disabled:opacity-40"
-                  >
-                    Close
-                  </button>
+                  <span className="flex shrink-0 gap-2">
+                    <Link href={`/table/${t.id}`} className="flex h-11 items-center rounded-xl bg-chalk px-4 font-semibold text-ink">
+                      Score here
+                    </Link>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => close(t.id)}
+                      className="h-11 rounded-xl border-2 border-double px-4 font-semibold text-double disabled:opacity-40"
+                    >
+                      Close
+                    </button>
+                  </span>
                 </li>
               ))}
             </ul>
-            <p className="text-sm text-dim">Closing here locks the pub&apos;s computer too, in case nobody closed it there.</p>
+            <p className="text-sm text-dim">
+              Score here to enter darts on this phone while the pub&apos;s computer shows the game. Closing here locks the pub&apos;s
+              computer too, in case nobody closed it there.
+            </p>
           </div>
         )}
       </section>

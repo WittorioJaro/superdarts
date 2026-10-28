@@ -35,11 +35,9 @@ export async function persistGame(input: SaveGameInput, createdBy: string, conne
 
   const hasBots = known.some((p) => p.bot !== null);
   const kind = hasBots ? "match" : game.kind;
-  const ranked = kind === "match" && !!game.ranked && !hasBots;
   const rec = buildRecords(game.mode, config.data, game.playerIds, game.darts);
-  if (kind === "match" && !rec.finished) {
-    return { ok: false, retry: false, error: "Only finished matches are saved." };
-  }
+  // A match stopped early keeps its darts for the stats but has no winner, so it can't move ratings.
+  const ranked = kind === "match" && !!game.ranked && !hasBots && rec.finished;
 
   await connection.transaction(async (tx) => {
     const inserted = await tx

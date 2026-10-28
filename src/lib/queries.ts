@@ -133,6 +133,7 @@ export async function playerStats(playerId: string, scope: StatsScope, range: St
         finishedAt: games.finishedAt,
         kind: games.kind,
         mode: games.mode,
+        status: games.status,
         gameId: games.id,
         botFree: sql<boolean>`${noBots()}`,
         legsPlayed: sql<number>`(select count(distinct ${turns.leg})::int from ${turns} where ${turns.gameId} = ${games.id})`,
@@ -168,6 +169,8 @@ export async function playerStats(playerId: string, scope: StatsScope, range: St
   }
 
   const matches = matchRows.filter((r) => r.kind === "match" && r.botFree);
+  // A match ended early counts its legs, but not as a win or a loss.
+  const decided = matches.filter((m) => m.status === "finished");
   const cricketVisits = cricketGames.flatMap((g) => g.turns);
   const averages = matchRows
     .filter((r) => r.average !== null && (r.mode === "x01" || r.mode === "scoring"))
@@ -180,11 +183,11 @@ export async function playerStats(playerId: string, scope: StatsScope, range: St
     heat,
     averages,
     matches: {
-      played: matches.length,
-      won: matches.filter((m) => m.winner).length,
+      played: decided.length,
+      won: decided.filter((m) => m.winner).length,
       legsWon: matches.reduce((n, m) => n + m.legsWon, 0),
       legsPlayed: matches.reduce((n, m) => n + m.legsPlayed, 0),
-      form: matches.slice(-10).map((m) => m.winner),
+      form: decided.slice(-10).map((m) => m.winner),
     },
   };
 }
@@ -385,7 +388,7 @@ export async function leaderboard(range: StatsRange): Promise<{
       .from(players).leftJoin(ratings, eq(ratings.playerId, players.id)).where(isNotNull(players.userId)),
     db.select({ playerId: gamePlayers.playerId, matches: sql<number>`count(*)::int`, wins: sql<number>`count(*) filter (where ${gamePlayers.winner})::int` })
       .from(gamePlayers).innerJoin(games, eq(games.id, gamePlayers.gameId))
-      .where(and(eq(games.kind, "match"), noBots(), sinceRange(range))).groupBy(gamePlayers.playerId),
+      .where(and(eq(games.kind, "match"), eq(games.status, "finished"), noBots(), sinceRange(range))).groupBy(gamePlayers.playerId),
     competitiveStats(range),
   ]);
   const byStats = new Map(stats.map((r) => [r.playerId, r]));
@@ -415,13 +418,14 @@ export async function headToHead(aId: string, bId: string): Promise<{
     average: s?.darts ? s.points * 3 / s.darts : null, highestCheckout: s?.highestCheckout ?? 0,
     n180: s?.n180 ?? 0, checkoutPct: s?.attempts ? s.checkouts * 100 / s.attempts : null }; };
   let streak: { playerId: string; count: number } | null = null;
-  for (const g of rows) {
+  const decided = rows.filter((g) => g.status === "finished");
+  for (const g of decided) {
     if (g.winnerId !== aId && g.winnerId !== bId) break;
     if (!streak) streak = { playerId: g.winnerId, count: 1 };
     else if (streak.playerId === g.winnerId) streak.count++;
     else break;
   }
-  return { matches: rows.length, winsA: rows.filter((g) => g.winnerId === aId).length, winsB: rows.filter((g) => g.winnerId === bId).length,
+  return { matches: decided.length, winsA: decided.filter((g) => g.winnerId === aId).length, winsB: decided.filter((g) => g.winnerId === bId).length,
     streak, a: side(aId), b: side(bId), games: rows.map((g) => ({ id: g.id, kind: g.kind, mode: g.mode as ModeId,
       config: g.config as Record<string, unknown>, status: g.status, finishedAt: g.finishedAt, players: g.players.map((p) => ({
         id: p.playerId, name: p.player.name, color: p.player.color, score: p.score, average: p.average,

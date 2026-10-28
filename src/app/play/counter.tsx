@@ -18,7 +18,7 @@ import { type AnyState, type ConfigMap, type StateMap, replay } from "@/lib/dart
 import { CRICKET_NUMBERS } from "@/lib/darts/modes/cricket";
 import { type X01Config, doubleTarget, liveRemaining, visitTotalNeeds } from "@/lib/darts/modes/x01";
 import { BOBS_TARGETS, checkoutTargets, doublesTargets } from "@/lib/darts/modes/practice";
-import { type ActiveGame, type GamePlayer, type GameStore, gameStore, toPendingSave, useActiveGame } from "@/lib/game-store";
+import { type ActiveGame, type GamePlayer, type GameStore, gameStore, useActiveGame } from "@/lib/game-store";
 import { SAVE_ERROR } from "@/lib/pub-table-types";
 import { planStore, startPlanStep, usePlan } from "@/lib/plan-store";
 import { type SyncResult, syncPending } from "@/lib/sync";
@@ -92,12 +92,13 @@ function botAt(game: ActiveGame, i: number) {
   return (game.players[i] as Player | undefined)?.bot ?? null;
 }
 
+const NOTHING_UNDONE: { darts: Dart[]; at: Dart[] }[] = [];
 const BOT_PACE = 650;
 /** A finished game waits this long before saving, so a wrong last dart can still be undone. */
 const AUTOSAVE_MS = 10_000;
 
 /** Where a game lives and how it's saved. A pub table plays from its own store and returns to its own setup. */
-export type PlayScope = { store: GameStore; sync: () => Promise<SyncResult>; table: boolean };
+export type PlayScope = { store: GameStore; sync: () => Promise<SyncResult>; table: boolean; big?: boolean };
 const OWN_GAMES: PlayScope = { store: gameStore, sync: syncPending, table: false };
 
 export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: PlayScope }) {
@@ -111,9 +112,22 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
   const plan = usePlan();
   const inPlan = plan?.gameId === game.id ? plan : null;
 
+  // Saves happen once per game. Undo is only offered until then, so the saved game never goes stale.
+  // `queued` is this screen handing the game over; `game.saved` is the server having it, shown on every screen of a table.
+  const [queued, setQueued] = useState<string | null>(null);
+  const saved = !!game.saved || queued === saveKey(game);
+
+  // What undo took away, newest last, so redo can put it back. Only valid while the game still ends where undo left it.
+  const [undone, setUndone] = useState<{ darts: Dart[]; at: Dart[] }[]>([]);
+  const redoable = useMemo(
+    () => (undone.length > 0 && sameDarts(undone[undone.length - 1].at, game.darts) ? undone : NOTHING_UNDONE),
+    [undone, game.darts],
+  );
+
   const throwDart = useCallback(
     (d: Dart) => {
-      if (state.finished || game.ended) return;
+      if (state.finished || game.ended || saved) return;
+      setUndone([]);
       const next = { ...game, darts: [...game.darts, { ...d, t: Date.now() }] };
       store.setActive(next);
       const after = rebuild(next);
@@ -121,12 +135,12 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
       if (ev && ev.type !== "hit" && ev.type !== "match") setFlash({ key: next.darts.length, event: ev });
       say(callsFor(game.mode, after as never, game.config as never));
     },
-    [game, state.finished, store],
+    [game, state.finished, store, saved],
   );
 
   // Undo goes back to the last dart a person threw, taking any bot visit with it.
   const undo = useCallback(() => {
-    if (game.darts.length === 0) return;
+    if (game.darts.length === 0 || saved) return;
     setFlash(null);
     hush();
     let darts = game.darts.slice(0, -1);
@@ -135,8 +149,19 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
       if (s.finished || !botAt(game, s.current)) break;
       darts = darts.slice(0, -1);
     }
+    setUndone([...redoable, { darts: game.darts.slice(darts.length), at: darts }]);
     store.setActive({ ...game, ended: false, darts });
-  }, [game, store]);
+  }, [game, store, redoable, saved]);
+
+  // Redo restores exactly what the last undo removed, timestamps and all.
+  const redo = useCallback(() => {
+    const last = redoable[redoable.length - 1];
+    if (!last || saved) return;
+    setFlash(null);
+    hush();
+    setUndone(redoable.slice(0, -1));
+    store.setActive({ ...game, darts: [...game.darts, ...last.darts] });
+  }, [game, store, redoable, saved]);
 
   // The caller opens each game, and its clips load in the background so the first score plays straight away.
   const fresh = game.darts.length === 0;
@@ -165,12 +190,10 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
     return () => clearTimeout(id);
   }, [bot, state, game.config, throwDart]);
 
-  // Saves happen once per game. Undo is only offered until then, so the saved game never goes stale.
-  const [saved, setSaved] = useState(false);
   function save(g: ActiveGame = game) {
-    if (saved || g.darts.length === 0) return;
-    setSaved(true);
-    store.addPending(toPendingSave(g));
+    if (g.saved || queued === saveKey(g) || g.darts.length === 0) return;
+    setQueued(saveKey(g));
+    store.queueSave(g);
     void scope.sync().then((r) => {
       if (r.saved) router.refresh();
       // A table closed from the phone, or past its 12 hours, rejects every save. The refresh shows why and
@@ -303,11 +326,11 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
         )}
       </header>
 
-      <div className="grid min-h-0 flex-1 gap-3 portrait:grid-rows-[minmax(0,1fr)_minmax(0,1.15fr)] landscape:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-        <div className="min-h-0">
-          <Board game={game} state={state} />
+      <div className="grid min-h-0 flex-1 gap-3 portrait:grid-cols-[minmax(0,1fr)] portrait:grid-rows-[minmax(0,1fr)_minmax(0,1.15fr)] landscape:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+        <div className="min-h-0 min-w-0">
+          <Board game={game} state={state} big={!!scope.big} />
         </div>
-        <div className="min-h-0">
+        <div className="min-h-0 min-w-0">
           {bot ? (
             <div className="flex h-full flex-col items-center justify-center gap-4 rounded-3xl bg-cabinet p-6 text-center">
               <span className="font-display text-4xl font-bold">{game.players[state.current].name} is throwing…</span>
@@ -328,9 +351,19 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
               needs={(total) => visitTotalNeeds(state as StateMap["x01"], game.config as X01Config, total)}
               onUndo={undo}
               canUndo={game.darts.length > 0}
+              onRedo={redo}
+              canRedo={redoable.length > 0}
             />
           ) : (
-            <Pad onDart={throwDart} onUndo={undo} canUndo={game.darts.length > 0} targets={targets} quick={quick} />
+            <Pad
+              onDart={throwDart}
+              onUndo={undo}
+              canUndo={game.darts.length > 0}
+              onRedo={redo}
+              canRedo={redoable.length > 0}
+              targets={targets}
+              quick={quick}
+            />
           )}
         </div>
       </div>
@@ -358,10 +391,11 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
   );
 }
 
-export function Board({ game, state }: { game: ActiveGame; state: AnyState }) {
+/** `big` is for a pub table, read from the oche rather than at arm's length. */
+export function Board({ game, state, big = false }: { game: ActiveGame; state: AnyState; big?: boolean }) {
   switch (game.mode) {
     case "x01":
-      return <X01Board state={state as StateMap["x01"]} config={game.config as X01Config} players={game.players} />;
+      return <X01Board state={state as StateMap["x01"]} config={game.config as X01Config} players={game.players} big={big} />;
     case "scoring":
       return <ScoringBoard state={state as StateMap["scoring"]} config={game.config as ConfigMap["scoring"]} />;
     case "around":
@@ -501,13 +535,17 @@ function LeaveMenu({
       <div className="flex flex-col gap-3">
         <h2 className="font-display text-3xl font-bold">Leave the match?</h2>
         <p className="mb-2 text-dim">
-          {onPause
-            ? "It stays on this device. Pick it up again from the home screen. Only finished matches count towards stats."
-            : "Only finished matches count towards stats. Abandoning throws this one away."}
+          {onPause ? "It stays on this device. Pick it up again from the home screen. " : ""}
+          Ending it now saves every dart to the players&apos; stats without a winner. Abandoning throws it away.
         </p>
         {onPause && (
           <button type="button" onClick={onPause} className={`${btn} bg-chalk text-ink`}>
             Pause and go home
+          </button>
+        )}
+        {game.darts.length > 0 && (
+          <button type="button" onClick={onEnd} className={`${btn} ${onPause ? "bg-felt" : "bg-chalk text-ink"}`}>
+            End and save stats
           </button>
         )}
         <button type="button" onClick={onDiscard} className={`${btn} border-2 border-double text-double`}>
@@ -540,4 +578,13 @@ function LeaveMenu({
       </button>
     </div>
   );
+}
+
+function sameDarts(a: Dart[], b: Dart[]) {
+  return a.length === b.length && a.every((d, i) => d.t === b[i].t && d.s === b[i].s && d.m === b[i].m && d.v?.total === b[i].v?.total);
+}
+
+/** What a save handed over: this game, with these darts, ended or not. */
+function saveKey(g: ActiveGame) {
+  return `${g.id}:${g.darts.length}:${g.darts.at(-1)?.t ?? ""}:${!!g.ended}`;
 }

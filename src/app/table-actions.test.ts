@@ -5,7 +5,8 @@ import { getCurrentPlayer } from "@/lib/auth";
 import { persistGame } from "@/lib/persist-game";
 import { getTableSession, TABLE_COOKIE, TABLE_TTL } from "@/lib/pub-tables";
 import { revalidateGameData } from "@/lib/revalidate-data";
-import { closeTable, redeemTableCode, saveTableGame } from "./table-actions";
+import { writeLive } from "@/lib/pub-table-live";
+import { closeTable, pushTableLive, redeemTableCode, saveTableGame } from "./table-actions";
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/db", () => ({ db: { update: vi.fn() } }));
@@ -13,6 +14,9 @@ vi.mock("@/lib/auth", () => ({ getCurrentPlayer: vi.fn() }));
 vi.mock("@/lib/persist-game", () => ({ persistGame: vi.fn() }));
 vi.mock("@/lib/revalidate-data", () => ({ revalidateGameData: vi.fn() }));
 vi.mock("next/headers", () => ({ cookies: vi.fn() }));
+vi.mock("@/lib/pub-table-live", async (original) => ({
+  ...await original<typeof import("@/lib/pub-table-live")>(), writeLive: vi.fn(),
+}));
 vi.mock("@/lib/pub-tables", async (original) => ({
   ...await original<typeof import("@/lib/pub-tables")>(), getTableSession: vi.fn(),
 }));
@@ -103,6 +107,35 @@ describe("public table redemption and closure", () => {
     expect(await closeTable()).toEqual({ ok: true });
     expect(store.delete).toHaveBeenCalledWith(TABLE_COOKIE);
     expect(db.update).not.toHaveBeenCalled();
+    expect(getCurrentPlayer).not.toHaveBeenCalled();
+  });
+});
+
+describe("sharing a pub table's game", () => {
+  const live = { id: input.id, kind: "match", mode: "x01", config: input.config, players: [{ id: playerId, name: "Guest", color: "#abcdef" }],
+    darts: [{ s: 20, m: 3 }], startedAt: input.startedAt };
+
+  it("tells a closed table it's closed, before touching the game", async () => {
+    vi.mocked(getTableSession).mockResolvedValue(null);
+    expect(await pushTableLive(0, live)).toMatchObject({ ok: false, closed: true });
+    expect(writeLive).not.toHaveBeenCalled();
+  });
+
+  it("refuses players outside the table, practice and broken settings", async () => {
+    for (const game of [{ ...live, players: [{ id: hostId, name: "Host", color: "#000" }] }, { ...live, kind: "practice" },
+      { ...live, config: { startScore: 5 } }, { ...live, darts: [{ s: 21, m: 3 }] }]) {
+      expect(await pushTableLive(0, game)).toMatchObject({ ok: false, closed: false });
+    }
+    expect(await pushTableLive(-1, live)).toMatchObject({ ok: false, closed: false });
+    expect(writeLive).not.toHaveBeenCalled();
+  });
+
+  it("writes the game, or its removal, against the revision the device last saw", async () => {
+    vi.mocked(writeLive).mockResolvedValue({ ok: true, rev: 4 });
+    expect(await pushTableLive(3, live)).toEqual({ ok: true, rev: 4 });
+    expect(writeLive).toHaveBeenLastCalledWith(input.id, 3, live);
+    await pushTableLive(4, null);
+    expect(writeLive).toHaveBeenLastCalledWith(input.id, 4, null);
     expect(getCurrentPlayer).not.toHaveBeenCalled();
   });
 });

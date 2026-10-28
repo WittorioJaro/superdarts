@@ -195,3 +195,11 @@ export const pubTables = pgTable("pub_tables", {
   expiresAt: timestamp("expires_at", { withTimezone: true }),
   closedAt: timestamp("closed_at", { withTimezone: true }),
 }, (t) => [index("pub_tables_host_idx").on(t.hostId)]).enableRLS();
+
+/** The game in progress at a pub table, shared by the table's computer and the host's phone. `rev` guards every write. */
+export const pubTableLive = pgTable("pub_table_live", {
+  tableId: uuid("table_id").primaryKey().references(() => pubTables.id, { onDelete: "cascade" }),
+  rev: integer("rev").notNull(),
+  game: jsonb("game").$type<import("@/lib/game-store").ActiveGame | null>(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}).enableRLS();

@@ -198,11 +198,11 @@ export function OnlineGame({ conn, me }: { conn: RoomConnection; me: GamePlayer 
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 gap-3 portrait:grid-rows-[minmax(0,1fr)_minmax(0,1.15fr)] landscape:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-        <div className="min-h-0">
+      <div className="grid min-h-0 flex-1 gap-3 portrait:grid-cols-[minmax(0,1fr)] portrait:grid-rows-[minmax(0,1fr)_minmax(0,1.15fr)] landscape:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+        <div className="min-h-0 min-w-0">
           <Board game={game} state={state} />
         </div>
-        <div className="flex min-h-0 flex-col gap-3">
+        <div className="flex min-h-0 min-w-0 flex-col gap-3">
           {myTurn ? (
             <>
               <VideoStrip players={players.filter((p) => p.id !== me.id)} meId={me.id} className="h-24 shrink-0" />

@@ -20,15 +20,16 @@ export function RecentGames({ games, me }: { games: GameRow[]; me: string }) {
         const mine = g.players.find((p) => p.id === me);
         const others = g.players.filter((p) => p.id !== me);
         const won = !!mine?.winner;
+        const result = g.kind !== "match" ? "Practice" : g.status === "stopped" ? "Ended" : won ? "Won" : "Lost";
         return (
           <li key={g.id}>
             <Link href={`/games/${g.id}`} className="flex items-center gap-4 px-5 py-3.5 transition hover:bg-felt">
             <span
               className={`w-20 shrink-0 font-display text-lg font-bold ${
-                g.kind === "match" ? (won ? "text-treble" : "text-double") : "text-dim"
+                result === "Won" ? "text-treble" : result === "Lost" ? "text-double" : "text-dim"
               }`}
             >
-              {g.kind === "match" ? (won ? "Won" : "Lost") : "Practice"}
+              {result}
             </span>
             <span className="min-w-0 flex-1">
               <span className="block truncate font-medium">

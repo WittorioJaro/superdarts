@@ -11,8 +11,9 @@ import { getCurrentPlayer } from "@/lib/auth";
 import { saveGameSchema } from "@/lib/darts/schemas";
 import type { GamePlayer } from "@/lib/game-store";
 import { persistGame, type SaveResult } from "@/lib/persist-game";
+import { liveAccess, type LiveAccess, parseLiveGame, writeLive } from "@/lib/pub-table-live";
 import { TABLE_CODE_ALPHABET } from "@/lib/pub-table-token";
-import { normalizeTableCode, TABLE_CODE_LENGTH, type HostTable, type TableResult } from "@/lib/pub-table-types";
+import { normalizeTableCode, TABLE_CODE_LENGTH, type HostTable, type PushResult, type TableResult } from "@/lib/pub-table-types";
 import { CODE_TTL, generateCode, getTableSession, hashToken, TABLE_COOKIE, TABLE_TTL } from "@/lib/pub-tables";
 import { revalidateGameData } from "@/lib/revalidate-data";
 
@@ -60,6 +61,17 @@ export async function redeemTableCode(code: string): Promise<TableResult> {
 export async function saveTableGame(input: unknown): Promise<SaveResult> {
   const session = await getTableSession();
   if (!session) return { ok: false, retry: false, error: "This table has been closed." };
+  return saveForTable(session, input);
+}
+
+/** The host's phone scoring a table saves the same way the table's computer does. */
+export async function saveHostTableGame(tableId: string, input: unknown): Promise<SaveResult> {
+  const access = await liveAccess(tableId);
+  if (!access) return { ok: false, retry: false, error: "This table has been closed." };
+  return saveForTable(access, input);
+}
+
+async function saveForTable(session: Pick<LiveAccess, "hostId" | "playerIds">, input: unknown): Promise<SaveResult> {
   const parsed = saveGameSchema.safeParse(input);
   if (!parsed.success) return { ok: false, retry: false, error: "The game data was malformed." };
   const game = parsed.data;
@@ -101,4 +113,13 @@ export async function closeHostTable(id: string): Promise<TableResult> {
   await db.update(pubTables).set({ closedAt: sql`now()`, code: null })
     .where(and(eq(pubTables.id, id), eq(pubTables.hostId, me.id), isNull(pubTables.closedAt)));
   return { ok: true };
+}
+
+/** Shares the table's game in progress. Without `tableId` the caller is the table's computer; with it, the host's phone. */
+export async function pushTableLive(base: number, game: unknown, tableId?: string): Promise<PushResult> {
+  const access = await liveAccess(tableId);
+  if (!access) return { ok: false, conflict: false, closed: true, error: "This table has been closed." };
+  const parsed = parseLiveGame(game, access);
+  if (parsed === undefined || !Number.isInteger(base) || base < 0) return { ok: false, conflict: false, closed: false, error: "The game data was malformed." };
+  return writeLive(access.tableId, base, parsed);
 }

@@ -24,8 +24,10 @@ export interface ActiveGame {
   players: GamePlayer[];
   darts: Dart[];
   startedAt: string;
-  /** A practice session the player stopped before the drill was over. */
+  /** A session or match the players stopped before it was over. */
   ended?: boolean;
+  /** Handed to the save queue. Undo is closed from then on, on every device showing this game. */
+  saved?: boolean;
 }
 
 export interface PendingSave {
@@ -60,7 +62,7 @@ function write(key: string, value: unknown) {
   for (const l of listeners) l();
 }
 
-function subscribe(listener: () => void) {
+export function subscribe(listener: () => void) {
   listeners.add(listener);
   const onStorage = () => listener();
   window.addEventListener("storage", onStorage);
@@ -72,17 +74,34 @@ function subscribe(listener: () => void) {
 
 const EMPTY: PendingSave[] = [];
 
-/** A game, its save queue and preferences under one key prefix. A pub table keeps its own, so closing it can wipe everything. */
-function createGameStore(prefix: string) {
+/**
+ * A game, its save queue and preferences under one key prefix. A pub table keeps its own, so closing it can wipe everything.
+ * `onSet` hears every change the players make to the game, for sharing it with another device, and `queueSave`
+ * can hold a finished game back until that device is known to agree with it.
+ */
+export function createGameStore(
+  prefix: string,
+  hooks: { onSet?: (g: ActiveGame | null) => void; queueSave?: (g: ActiveGame) => void } = {},
+) {
   const ACTIVE = `${prefix}.active`;
   const PENDING = `${prefix}.pending`;
   const PREFS = `${prefix}.prefs`;
   const store = {
     active: () => read<ActiveGame | null>(ACTIVE, null),
-    setActive: (g: ActiveGame | null) => write(ACTIVE, g),
+    setActive(g: ActiveGame | null) {
+      write(ACTIVE, g);
+      hooks.onSet?.(g);
+    },
+    /** Takes a game from another device without echoing it back. */
+    adoptActive: (g: ActiveGame | null) => write(ACTIVE, g),
     pending: () => read<PendingSave[]>(PENDING, EMPTY),
     addPending(save: PendingSave) {
       write(PENDING, [...store.pending().filter((p) => p.id !== save.id), save]);
+    },
+    /** Hands a finished game to the save queue. */
+    queueSave(g: ActiveGame) {
+      if (hooks.queueSave) hooks.queueSave(g);
+      else store.addPending(toPendingSave(g));
     },
     removePending(id: string) {
       write(PENDING, store.pending().filter((p) => p.id !== id));
@@ -97,6 +116,10 @@ function createGameStore(prefix: string) {
     /** Removes every trace of this store from the device. */
     clear() {
       for (const key of [ACTIVE, PENDING, PREFS]) localStorage.removeItem(key);
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i);
+        if (key?.startsWith(`${prefix}.live`)) localStorage.removeItem(key);
+      }
       for (const l of listeners) l();
     },
   };
@@ -109,11 +132,11 @@ export const gameStore = createGameStore("superdarts");
 /** Games scored on a public device through a table code. Never mixed with the signed-in player's own. */
 export const tableStore = createGameStore("superdarts.table");
 
-export function useActiveGame(store: GameStore = gameStore) {
+export function useActiveGame(store: Pick<GameStore, "active"> = gameStore) {
   return useSyncExternalStore(subscribe, store.active, () => null);
 }
 
-export function usePendingSaves(store: GameStore = gameStore) {
+export function usePendingSaves(store: Pick<GameStore, "pending"> = gameStore) {
   return useSyncExternalStore(subscribe, store.pending, () => EMPTY);
 }
 

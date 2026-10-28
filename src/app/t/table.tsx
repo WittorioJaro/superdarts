@@ -1,33 +1,98 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type ReactNode, useCallback, useEffect, useState, useSyncExternalStore, useTransition } from "react";
-import { closeTable, saveTableGame } from "@/app/table-actions";
+import { type ReactNode, useCallback, useEffect, useMemo, useState, useSyncExternalStore, useTransition } from "react";
+import { closeHostTable, closeTable, saveHostTableGame, saveTableGame } from "@/app/table-actions";
 import { DEFAULT_OPTS, type GameOpts, GameOptions, cricketConfig, x01Config } from "@/components/game-options";
 import { Avatar, Sheet } from "@/components/ui";
 import { gameDetail } from "@/lib/darts/labels";
-import { tableStore, useActiveGame, usePendingSaves } from "@/lib/game-store";
+import { type GameStore, useActiveGame, usePendingSaves } from "@/lib/game-store";
 import { SAVE_ERROR, type TableSession } from "@/lib/pub-table-types";
-import { createSync } from "@/lib/sync";
+import { createLiveTable } from "@/lib/table-live";
 import { CounterSkeleton, Play, type PlayScope } from "../play/counter";
-
-const sync = createSync(tableStore, saveTableGame);
-const SCOPE: PlayScope = { store: tableStore, sync, table: true };
 
 const noop = () => () => {};
 function useHydrated() {
   return useSyncExternalStore(noop, () => true, () => false);
 }
 
-export function Table({ session, logo }: { session: TableSession; logo: ReactNode }) {
-  const game = useActiveGame(tableStore);
+/**
+ * A pub table, on the pub's computer or, with `hostTableId`, on the host's phone. Both show and score the same game:
+ * a computer that's only good for showing the score can leave the scoring to the phone.
+ */
+export function Table({ session, logo, hostTableId }: { session: TableSession; logo: ReactNode; hostTableId?: string }) {
+  const router = useRouter();
+  // A new table on the same screen starts a fresh link.
+  const live = useMemo(
+    () =>
+      createLiveTable({
+        prefix: hostTableId ? `superdarts.host.${hostTableId}` : "superdarts.table",
+        key: session.id,
+        tableId: hostTableId,
+        save: hostTableId ? (g) => saveHostTableGame(hostTableId, g) : saveTableGame,
+      }),
+    [session.id, hostTableId],
+  );
+  const scope = useMemo<PlayScope>(() => ({ store: live.store, sync: live.sync, table: true, big: !hostTableId }), [live, hostTableId]);
+  useEffect(() => live.connect(), [live]);
+  const status = live.useStatus();
+  const game = useActiveGame(live.store);
   const hydrated = useHydrated();
+
+  // The computer goes back to the code screen. The phone stays put and says so.
+  const closed = status.closed;
+  useEffect(() => {
+    if (closed && !hostTableId) router.refresh();
+  }, [closed, hostTableId, router]);
+
+  useEffect(() => {
+    if (!status.notice) return;
+    const id = setTimeout(live.dismissNotice, 6000);
+    return () => clearTimeout(id);
+  }, [status.notice, live]);
+
   if (!hydrated) return <CounterSkeleton />;
-  if (game) return <Play key={game.id} game={game} scope={SCOPE} />;
-  return <Setup session={session} logo={logo} />;
+  if (closed && hostTableId) {
+    return (
+      <main className="flex flex-1 flex-col items-center justify-center gap-6 px-6 text-center">
+        <h1 className="font-display text-5xl font-extrabold">Table closed</h1>
+        <p className="text-lg text-dim">{closed} Finished games were saved from whichever screen ended them.</p>
+        <Link href="/table" className="rounded-2xl bg-chalk px-8 py-4 font-display text-2xl font-bold text-ink">
+          Back to pub tables
+        </Link>
+      </main>
+    );
+  }
+  return (
+    <>
+      {game ? (
+        <Play key={game.id} game={game} scope={scope} />
+      ) : (
+        <Setup session={session} logo={logo} store={live.store} sync={scope.sync} hostTableId={hostTableId} />
+      )}
+      {status.notice && (
+        <p role="status" className="fixed inset-x-0 bottom-6 z-30 mx-auto w-fit max-w-[90vw] rounded-2xl bg-brass px-5 py-3 font-semibold text-ink shadow-xl">
+          {status.notice}
+        </p>
+      )}
+    </>
+  );
 }
 
-function Setup({ session, logo }: { session: TableSession; logo: ReactNode }) {
+function Setup({
+  session,
+  logo,
+  store: tableStore,
+  sync,
+  hostTableId,
+}: {
+  session: TableSession;
+  logo: ReactNode;
+  store: GameStore;
+  sync: PlayScope["sync"];
+  hostTableId?: string;
+}) {
   const router = useRouter();
   const pending = usePendingSaves(tableStore);
   const [picked, setPicked] = useState<string[]>(() => tableStore.prefs("picked", session.players.map((p) => p.id)));
@@ -43,7 +108,7 @@ function Setup({ session, logo }: { session: TableSession; logo: ReactNode }) {
       tableStore.setPref(SAVE_ERROR, res.errors[0]);
       router.refresh();
     }
-  }, [router]);
+  }, [router, sync, tableStore]);
 
   useEffect(() => {
     // Shown once: the message is in state now, so the store doesn't need it.
@@ -52,7 +117,7 @@ function Setup({ session, logo }: { session: TableSession; logo: ReactNode }) {
     void flush();
     window.addEventListener("online", flush);
     return () => window.removeEventListener("online", flush);
-  }, [flush]);
+  }, [flush, tableStore]);
 
   const lineup = picked.map((id) => session.players.find((p) => p.id === id)!).filter(Boolean);
   const config = x01Config(opts);
@@ -80,7 +145,9 @@ function Setup({ session, logo }: { session: TableSession; logo: ReactNode }) {
           <div>
             <h1 className="font-display text-3xl leading-none font-extrabold tracking-tight">Pub table</h1>
             <p className="text-sm text-dim">
-              Opened by {session.hostName.split(" ")[0]}. Open until {until} or until you close it.
+              {hostTableId
+                ? `Scoring from your phone. The pub's computer shows the same game. Open until ${until}.`
+                : `Opened by ${session.hostName.split(" ")[0]}. Open until ${until} or until you close it. Scores can also come from ${session.hostName.split(" ")[0]}'s phone.`}
             </p>
           </div>
         </div>
@@ -181,13 +248,23 @@ function Setup({ session, logo }: { session: TableSession; logo: ReactNode }) {
       </div>
 
       <Sheet open={closing} onClose={() => setClosing(false)} label="Close table">
-        <CloseTable onCancel={() => setClosing(false)} />
+        <CloseTable onCancel={() => setClosing(false)} store={tableStore} sync={sync} hostTableId={hostTableId} />
       </Sheet>
     </main>
   );
 }
 
-function CloseTable({ onCancel }: { onCancel: () => void }) {
+function CloseTable({
+  onCancel,
+  store: tableStore,
+  sync,
+  hostTableId,
+}: {
+  onCancel: () => void;
+  store: GameStore;
+  sync: PlayScope["sync"];
+  hostTableId?: string;
+}) {
   const router = useRouter();
   const pending = usePendingSaves(tableStore);
   const [busy, startClosing] = useTransition();
@@ -199,12 +276,14 @@ function CloseTable({ onCancel }: { onCancel: () => void }) {
       await sync().catch(() => null);
       if (tableStore.pending().length > 0 && !window.confirm("Some games haven't been saved and will be lost. Close anyway?")) return;
       try {
-        await closeTable();
+        const res = hostTableId ? await closeHostTable(hostTableId) : await closeTable();
+        if (!res.ok) return setError(res.error);
       } catch {
         return setError("Couldn't reach Superdarts, so the table is still open. Check the connection and try again.");
       }
       tableStore.clear();
-      router.refresh();
+      if (hostTableId) router.push("/table");
+      else router.refresh();
     });
   }
 
@@ -213,7 +292,9 @@ function CloseTable({ onCancel }: { onCancel: () => void }) {
     <div className="flex flex-col gap-3">
       <h2 className="font-display text-3xl font-bold">Close the table?</h2>
       <p className="mb-2 text-dim">
-        Finished games are saved first. After that this computer is locked again, and scoring here takes a new code.
+        {hostTableId
+          ? "Finished games are saved first. After that the pub's computer is locked again, and scoring there takes a new code."
+          : "Finished games are saved first. After that this computer is locked again, and scoring here takes a new code."}
         {pending.length > 0 && ` ${pending.length === 1 ? "1 game is" : `${pending.length} games are`} still waiting to be saved.`}
       </p>
       {error && <p className="text-double">{error}</p>}

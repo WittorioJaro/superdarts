@@ -40,12 +40,15 @@ export function DartSlots({ darts, size = "lg" }: { darts: ScoredDart[]; size?: 
   );
 }
 
-function Route({ route }: { route: Dart[] | null }) {
+function Route({ route, big = false }: { route: Dart[] | null; big?: boolean }) {
   if (!route) return null;
   return (
-    <p className="flex items-center gap-2 font-display text-2xl font-bold text-brass" aria-label={`Checkout: ${route.map(dartLabel).join(", ")}`}>
+    <p
+      className={`flex items-center font-display font-bold text-brass ${big ? "gap-3 text-[clamp(2.5rem,7vh,4.5rem)] leading-none" : "gap-2 text-2xl"}`}
+      aria-label={`Checkout: ${route.map(dartLabel).join(", ")}`}
+    >
       {route.map((d, i) => (
-        <span key={i} className="rounded-lg border-2 border-brass/60 px-2.5 py-0.5">
+        <span key={i} className={`rounded-lg border-brass/60 ${big ? "border-4 px-4 py-1.5" : "border-2 px-2.5 py-0.5"}`}>
           {dartLabel(d)}
         </span>
       ))}
@@ -62,7 +65,7 @@ function lastClosedTurn(turns: Turn[], player: number, open: number | null) {
 
 /* ----------------------------------------------------------------- X01 */
 
-export function X01Board({ state, config, players }: { state: StateMap["x01"]; config: X01Config; players: GamePlayer[] }) {
+export function X01Board({ state, config, players, big = false }: { state: StateMap["x01"]; config: X01Config; players: GamePlayer[]; big?: boolean }) {
   const open = currentTurn(state);
   const many = players.length > 2;
 
@@ -123,7 +126,7 @@ export function X01Board({ state, config, players }: { state: StateMap["x01"]; c
             </div>
 
             <div className="flex min-h-9 items-center justify-between gap-3">
-              {active && route ? <Route route={route} /> : <span />}
+              {active && route ? <Route route={route} big={big} /> : <span />}
               <span className="text-dim">
                 Avg <span className="font-display text-xl font-semibold text-chalk">{fmtAvg(avg)}</span>
               </span>
