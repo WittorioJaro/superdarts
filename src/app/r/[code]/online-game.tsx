@@ -4,11 +4,12 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { closeRoom, finishRoomGame, rematchRoom } from "@/app/online-actions";
 import { CallerButton } from "@/components/caller-settings";
+import { GoodDarts } from "@/components/good-darts";
 import { Pad, TotalPad } from "@/components/pad";
 import { MediaControls, VideoStrip, VideoTile, useHasCamera } from "@/components/room-video";
 import { Sheet } from "@/components/ui";
 import { holdSessionForRoom, hush, say, useCallerSettings, warmCaller } from "@/lib/caller";
-import { callsFor } from "@/lib/caller-calls";
+import { GOOD_DARTS, callsFor } from "@/lib/caller-calls";
 import { isCheckoutPossible } from "@/lib/darts/checkout";
 import { type Dart, visitTotal } from "@/lib/darts/board";
 import { gameTitle } from "@/lib/darts/labels";
@@ -83,6 +84,8 @@ export function OnlineGame({ conn, me }: { conn: RoomConnection; me: GamePlayer 
   }, [calling, live.id]);
   useEffect(() => holdSessionForRoom(), []);
   const flash = ev && ev.type !== "hit" && ev.type !== "match" ? ev : null;
+  // Anyone's 26 puts the show on every board, mine and theirs.
+  const goodDarts = flashAt === game.darts.length && callsFor(game.mode, state as never, game.config as never).includes(GOOD_DARTS);
 
   const [menu, setMenu] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
@@ -239,6 +242,7 @@ export function OnlineGame({ conn, me }: { conn: RoomConnection; me: GamePlayer 
       )}
 
       {flash && <Flash key={game.darts.length} event={flash} game={game} />}
+      {goodDarts && <GoodDarts key={game.darts.length} player={lastBy === null ? undefined : players[lastBy]?.name} />}
 
       <Sheet open={menu} onClose={() => setMenu(false)} label="Leave the room">
         <div className="flex flex-col gap-3">

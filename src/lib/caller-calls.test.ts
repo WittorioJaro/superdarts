@@ -26,7 +26,7 @@ describe("x01 calls", () => {
 
   it("calls totals from darts and whole visits, including no score", () => {
     expect(x01([T(20), T(20), T(20)])).toEqual(["score-180"]);
-    expect(x01([S(20), S(5), S(1)])).toEqual(["score-26"]);
+    expect(x01([S(20), S(5), S(1)])).toEqual(["good-darts"]);
     expect(x01([visitTotal(0)])).toEqual(["score-0"]);
     expect(x01([visitTotal(180)])).toEqual(["score-180"]);
   });
@@ -213,10 +213,17 @@ describe("existing clips", () => {
   it("warms every existing clip exactly once", () => {
     const ids = allCalls();
     const impossible = [163, 166, 169, 172, 173, 175, 176, 178, 179];
-    const scores = Array.from({ length: 181 }, (_, n) => n).filter((n) => !impossible.includes(n)).map((n) => `score-${n}`);
+    const scores = Array.from({ length: 181 }, (_, n) => n).filter((n) => !impossible.includes(n) && n !== 26).map((n) => `score-${n}`);
     const requires = Array.from({ length: 169 }, (_, i) => `require-${i + 2}`);
-    expect(ids).toEqual(["game-on", "bust", "game-shot-leg", "game-shot-set", "game-shot-match", ...scores, ...requires]);
+    expect(ids).toEqual(["game-on", "bust", "game-shot-leg", "game-shot-set", "game-shot-match", "good-darts", ...scores, ...requires]);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("says good darts for any 26, however it's entered", () => {
+    expect(x01([visitTotal(26)])).toEqual(["good-darts"]);
+    expect(x01([D(13), MISS, MISS])).toEqual(["good-darts"]);
+    expect(x01([visitTotal(26)], { startScore: 126 }, 1)).toEqual(["good-darts", "require-100"]);
+    expect(calls("scoring", { rounds: 1 }, [S(20), S(5), S(1)])).toEqual(["good-darts"]);
   });
 
   it("guards impossible face-value totals", () => {

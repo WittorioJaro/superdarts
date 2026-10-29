@@ -7,8 +7,9 @@ import { Pad, TotalPad } from "@/components/pad";
 import { Bone } from "@/components/skeleton";
 import { Sheet } from "@/components/ui";
 import { CallerButton } from "@/components/caller-settings";
+import { GoodDarts } from "@/components/good-darts";
 import { hush, say, useCallerSettings, warmCaller } from "@/lib/caller";
-import { callsFor } from "@/lib/caller-calls";
+import { GOOD_DARTS, callsFor } from "@/lib/caller-calls";
 import { type BotModel, botDart } from "@/lib/darts/bot";
 import { isCheckoutPossible } from "@/lib/darts/checkout";
 import { type Dart, visitTotal } from "@/lib/darts/board";
@@ -106,6 +107,8 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
   const { store, table } = scope;
   const state = useMemo(() => rebuild(game), [game]);
   const [flash, setFlash] = useState<{ key: number; event: GameEvent } | null>(null);
+  /** When a visit made 26: the dart count, so each one gets its own show, and who threw it. */
+  const [goodDarts, setGoodDarts] = useState<{ key: number; player: string } | null>(null);
   const [menu, setMenu] = useState(false);
   const [entry, setEntry] = useState<"darts" | "total">(() => (game.mode === "x01" ? store.prefs("entry", "darts") : "darts"));
   const calling = useCallerSettings().on;
@@ -124,6 +127,7 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
     [undone, game.darts],
   );
 
+  const thrower = game.players[state.current]?.name ?? "";
   const throwDart = useCallback(
     (d: Dart) => {
       if (state.finished || game.ended || saved) return;
@@ -133,15 +137,18 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
       const after = rebuild(next);
       const ev = after.event;
       if (ev && ev.type !== "hit" && ev.type !== "match") setFlash({ key: next.darts.length, event: ev });
-      say(callsFor(game.mode, after as never, game.config as never));
+      const calls = callsFor(game.mode, after as never, game.config as never);
+      if (calls.includes(GOOD_DARTS)) setGoodDarts({ key: next.darts.length, player: thrower });
+      say(calls);
     },
-    [game, state.finished, store, saved],
+    [game, state.finished, thrower, store, saved],
   );
 
   // Undo goes back to the last dart a person threw, taking any bot visit with it.
   const undo = useCallback(() => {
     if (game.darts.length === 0 || saved) return;
     setFlash(null);
+    setGoodDarts(null);
     hush();
     let darts = game.darts.slice(0, -1);
     while (darts.length > 0) {
@@ -158,6 +165,7 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
     const last = redoable[redoable.length - 1];
     if (!last || saved) return;
     setFlash(null);
+    setGoodDarts(null);
     hush();
     setUndone(redoable.slice(0, -1));
     store.setActive({ ...game, darts: [...game.darts, ...last.darts] });
@@ -369,6 +377,7 @@ export function Play({ game, scope = OWN_GAMES }: { game: ActiveGame; scope?: Pl
       </div>
 
       {flash && <Flash key={flash.key} event={flash.event} game={game} />}
+      {goodDarts && <GoodDarts key={goodDarts.key} player={goodDarts.player} />}
 
       <Sheet open={menu} onClose={() => setMenu(false)} label={game.kind === "match" ? "Leave match" : "End session"}>
         <LeaveMenu

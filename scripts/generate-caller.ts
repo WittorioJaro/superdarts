@@ -1,5 +1,5 @@
 /**
- * Records the caller's lines with ElevenLabs into public/caller/v1, one mp3 per line.
+ * Records the caller's lines and the good darts sound effects with ElevenLabs into public/caller/v2, one mp3 each.
  *
  *   pnpm caller:generate --dry                          # list every line and its text
  *   pnpm caller:generate --only score-180,require-32
@@ -39,7 +39,8 @@ function possibleTotals(): number[] {
   return [...totals].sort((x, y) => x - y);
 }
 
-type Line = { id: string; text: string; stability: number };
+/** A caller line, or with `seconds` a sound effect described by `text`. */
+type Line = { id: string; text: string; stability: number; seconds?: number };
 
 // Eleven v4 takes its direction from audio tags, capitals and punctuation. Lower stability gives the big
 // calls room to soar; the everyday numbers stay steady so a session of them sounds like one caller.
@@ -76,6 +77,14 @@ const LINES: Line[] = [
   { id: "game-shot-leg", text: "[excited] Game shot... and the leg!", stability: 0.4 },
   { id: "game-shot-set", text: "[very excited] GAME SHOT... AND THE SET!", stability: 0.3 },
   { id: "game-shot-match", text: "[shouting, ecstatic] GAME SHOT... AND THE MATCH!!!", stability: 0.2 },
+  // Our 26 (twenty, five and one) replaces "twenty-six" in every call.
+  { id: "good-darts", text: "[laughing, shouting with delight] GOOD DARTS!!!", stability: 0.25 },
+  // Sound effects for the good darts shows, played under the caller.
+  { id: "sfx-applause", seconds: 4.5, stability: 0, text: "Packed pub crowd bursting into loud applause, cheering, whistling and whooping, glasses clinking" },
+  { id: "sfx-fire", seconds: 4, stability: 0, text: "Huge stage pyrotechnic flame jets whooshing up and roaring, crackling fire" },
+  { id: "sfx-fanfare", seconds: 4, stability: 0, text: "Short triumphant royal trumpet fanfare for a coronation, with a cymbal crash at the end" },
+  { id: "sfx-beer", seconds: 4, stability: 0, text: "Beer pouring and splashing into a big glass, foam fizzing, then a cheerful glass clink and a burp of laughter" },
+  { id: "sfx-fireworks", seconds: 4, stability: 0, text: "Fireworks launching with whistles and booming crackling explosions" },
 ];
 
 const exists = (path: string) => stat(path).then(() => true, () => false);
@@ -84,13 +93,15 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function record(client: ElevenLabsClient, line: Line, path: string) {
   for (let attempt = 1; ; attempt++) {
     try {
-      const audio = await client.textToSpeech.convert(VOICE_ID, {
-        text: line.text,
-        modelId: MODEL_ID,
-        languageCode: "en",
-        outputFormat: "mp3_44100_64",
-        voiceSettings: { stability: line.stability, similarityBoost: 0.8 },
-      });
+      const audio = line.seconds
+        ? await client.textToSoundEffects.convert({ text: line.text, durationSeconds: line.seconds, outputFormat: "mp3_44100_64" })
+        : await client.textToSpeech.convert(VOICE_ID, {
+            text: line.text,
+            modelId: MODEL_ID,
+            languageCode: "en",
+            outputFormat: "mp3_44100_64",
+            voiceSettings: { stability: line.stability, similarityBoost: 0.8 },
+          });
       await writeFile(path, Buffer.from(await new Response(audio).arrayBuffer()));
       return;
     } catch (e) {

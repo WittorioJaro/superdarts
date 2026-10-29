@@ -1,6 +1,10 @@
 import { useSyncExternalStore } from "react";
 import { allCalls } from "./caller-calls";
 
+/** The good darts shows' sounds, recorded alongside the caller's lines. */
+export const SOUND_EFFECTS = ["sfx-applause", "sfx-fire", "sfx-fanfare", "sfx-beer", "sfx-fireworks"] as const;
+export type SoundEffect = (typeof SOUND_EFFECTS)[number];
+
 /** Matches CALLER_VERSION in scripts/generate-caller.ts; the files under it never change. */
 const BASE = "/caller/v2/";
 
@@ -58,6 +62,8 @@ const loudness = (volume: number) => volume * volume;
 let ctx: AudioContext | null = null;
 let gain: GainNode | null = null;
 let playing: AudioBufferSourceNode[] = [];
+let effects: AudioBufferSourceNode[] = [];
+let effectGeneration = 0;
 /** Bumped by every new call and by hush(), so a call that's still loading knows it's been overtaken. */
 let generation = 0;
 const GAP_S = 0.25;
@@ -145,17 +151,20 @@ export function say(ids: string[]) {
   const audio = context();
   if (!audio) return;
   const { c, out } = audio;
-  hush();
+  stopLines();
   const mine = generation;
   if (c.state === "suspended") void c.resume();
   // Fetching every clip at once keeps the gap between lines down to the gap we choose.
   const clips = ids.map((id) => load(c, id));
   void (async () => {
     let at = 0;
-    for (const clip of clips) {
+    for (const [i, clip] of clips.entries()) {
       const buf = await clip;
       if (mine !== generation) return;
-      if (!buf) continue;
+      if (!buf) {
+        at = speakInstead(ids[i], c, at, mine);
+        continue;
+      }
       const { start, end } = audible(buf);
       const src = c.createBufferSource();
       src.buffer = buf;
@@ -168,16 +177,74 @@ export function say(ids: string[]) {
   })();
 }
 
+/** Lines the browser's own voice can stand in for until their clip is recorded. */
+const SPOKEN: Record<string, string> = { "good-darts": "Good darts!" };
+
+/** Says a missing clip's line with the browser's voice, in its place in the call. Returns when the next line can start. */
+function speakInstead(id: string, c: AudioContext, at: number, mine: number): number {
+  const text = SPOKEN[id];
+  if (!text || !("speechSynthesis" in window)) return at;
+  const start = Math.max(at, c.currentTime);
+  setTimeout(() => {
+    if (mine !== generation) return;
+    const line = new SpeechSynthesisUtterance(text);
+    line.lang = "en-GB";
+    line.rate = 1.05;
+    line.pitch = 1.15;
+    line.volume = readSettings().volume;
+    speechSynthesis.speak(line);
+  }, (start - c.currentTime) * 1000);
+  return start + 1.1 + GAP_S;
+}
+
+/**
+ * Plays a sound effect under the caller, quieter than the voice. A new call doesn't cut it off; hush() does.
+ * The show can start a moment before its call, so only an undo or leaving the game stops it.
+ */
+export function play(id: string, volume = 0.6) {
+  if (!readSettings().on) return;
+  const audio = context();
+  if (!audio) return;
+  const { c, out } = audio;
+  const mine = effectGeneration;
+  if (c.state === "suspended") void c.resume();
+  void load(c, id).then((buf) => {
+    if (!buf || mine !== effectGeneration) return;
+    const level = c.createGain();
+    level.gain.value = volume;
+    level.connect(out);
+    const src = c.createBufferSource();
+    src.buffer = buf;
+    src.connect(level);
+    src.onended = () => (effects = effects.filter((e) => e !== src));
+    src.start();
+    effects.push(src);
+  });
+}
+
+/** Cuts off the caller and any sound effect. */
 export function hush() {
+  stopLines();
+  effectGeneration++;
+  stopAll(effects);
+  effects = [];
+}
+
+function stopLines() {
   generation++;
-  for (const src of playing) {
+  if (typeof window !== "undefined" && "speechSynthesis" in window) speechSynthesis.cancel();
+  stopAll(playing);
+  playing = [];
+}
+
+function stopAll(sources: AudioBufferSourceNode[]) {
+  for (const src of sources) {
     try {
       src.stop();
     } catch {
       // Already finished.
     }
   }
-  playing = [];
 }
 
 /**
@@ -186,7 +253,7 @@ export function hush() {
  */
 export function warmCaller(): () => void {
   let stopped = false;
-  const queue = allCalls();
+  const queue = [...allCalls(), ...SOUND_EFFECTS];
   const worker = async () => {
     for (let id = queue.shift(); id && !stopped; id = queue.shift()) {
       await fetch(`${BASE}${id}.mp3`).then((r) => r.arrayBuffer(), () => null);
