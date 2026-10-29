@@ -5,6 +5,7 @@ import { PageShell } from "@/components/page-shell";
 export const metadata: Metadata = { title: "Terms of service · superdarts" };
 
 export default function TermsPage() {
+  const contact = process.env.CONTACT_EMAIL;
   return (
     <PageShell title="Terms of service" subtitle={<p className="text-dim">superdarts · A private hobby darts app</p>}>
       <article className="flex max-w-2xl flex-col gap-6 rounded-2xl border border-wire bg-cabinet p-6 text-base leading-relaxed sm:p-8">
@@ -22,7 +23,7 @@ export default function TermsPage() {
         </section>
         <section>
           <h2 className="font-display text-2xl font-bold">Privacy and contact</h2>
-          <p className="mt-2 text-dim">Read the <Link href="/privacy" className="text-chalk underline underline-offset-4">privacy policy</Link> for how your information is used. For questions, problems or an account deletion request, email <a href="mailto:wiktor.jaro@gmail.com" className="text-chalk underline underline-offset-4">wiktor.jaro@gmail.com</a>.</p>
+          <p className="mt-2 text-dim">Read the <Link href="/privacy" className="text-chalk underline underline-offset-4">privacy policy</Link> for how your information is used. For questions, problems or an account deletion request, {contact ? <>email <a href={`mailto:${contact}`} className="text-chalk underline underline-offset-4">{contact}</a></> : "contact whoever runs this site"}.</p>
         </section>
       </article>
     </PageShell>
