@@ -139,8 +139,10 @@ dialog:focus-visible {
 }
 
 /*
- * Good darts: the 26 show. Polished brass lettering slammed onto the screen, with a glint running across it.
- * Drop shadows rather than text shadows, because the lettering is a clipped gradient and text shadows would paint over it.
+ * Good darts: the 26 show. Brass lettering slammed onto a dark panel, like the Bust call but bigger, with a glint
+ * running across it. The letters are a solid colour with a text-shadow extrusion, so they always show. The polished
+ * gradient and the glint sit on top in ::after, the only place a clipped gradient goes: iPad Safari draws nothing at
+ * all for gradient-clipped text that also carries a filter.
  */
 .good-darts {
   animation: gd-fade 0.6s ease-in 3.6s forwards;
@@ -161,14 +163,32 @@ dialog:focus-visible {
 }
 
 .gd-text {
+  position: relative;
   font-family: var(--font-display);
-  font-size: min(25vw, 30vh, 15rem);
+  font-size: min(26vw, 32vh, 17rem);
   font-weight: 800;
   font-style: italic;
   line-height: 0.85;
   text-transform: uppercase;
   letter-spacing: -0.01em;
   padding: 0 0.12em;
+  white-space: nowrap;
+  color: #ffc53d;
+  text-shadow:
+    0 0.02em 0 #b07a1c,
+    0 0.04em 0 #7a5210,
+    0 0.06em 0 #4f3306,
+    0 0 0.25em rgb(255 196 64 / 0.55),
+    0 0.12em 0.15em rgb(0 0 0 / 0.7);
+}
+
+.gd-text::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  padding: inherit;
+  text-shadow: none;
+  color: transparent;
   background-image:
     linear-gradient(105deg, transparent 42%, rgb(255 255 255 / 0.95) 50%, transparent 58%),
     linear-gradient(180deg, #fffbe8 0%, #ffe08a 22%, #e0a83a 48%, #8a5a0e 51%, #c98f22 62%, #ffd45e 82%, #fff3c4 100%);
@@ -177,13 +197,20 @@ dialog:focus-visible {
   background-position: 100% 0, 0 0;
   -webkit-background-clip: text;
   background-clip: text;
-  color: transparent;
-  filter: drop-shadow(0 2px 0 #b07a1c) drop-shadow(0 3px 0 #7a5210) drop-shadow(0 3px 0 #4f3306)
-    drop-shadow(0 0 28px rgb(255 196 64 / 0.6)) drop-shadow(0 14px 20px rgb(0 0 0 / 0.65));
   animation: gd-sheen 1.5s ease-in-out 0.45s infinite;
 }
 
-.gd-text-late {
+.gd-panel {
+  border-radius: 2.5rem;
+  background: rgb(12 23 19 / 0.85);
+  box-shadow:
+    0 0 0 3px rgb(224 168 58 / 0.55),
+    0 0 60px rgb(255 196 64 / 0.35),
+    0 25px 50px rgb(0 0 0 / 0.6);
+  padding: min(1.5rem, 4vw) min(2.5rem, 5vw) min(1.25rem, 3vw);
+}
+
+.gd-text-late::after {
   animation-delay: 0.6s;
 }
 
@@ -204,12 +231,14 @@ dialog:focus-visible {
 
 /* The fire show: gold until the flames reach it at 0.7s, then white-hot and flickering. */
 .gd-look-fire .gd-text {
+  color: #ff8a1a;
+  animation: gd-flicker 0.18s steps(2) 0.7s infinite;
+}
+
+.gd-look-fire .gd-text::after {
   background-image:
     linear-gradient(105deg, transparent 42%, rgb(255 255 255 / 0.95) 50%, transparent 58%),
     linear-gradient(180deg, #fffbe0 0%, #ffe066 25%, #ff9a1a 50%, #e8410c 72%, #8f1a04 100%);
-  animation:
-    gd-sheen 1.5s ease-in-out 0.45s infinite,
-    gd-flicker 0.18s steps(2) 0.7s infinite;
 }
 
 .gd-look-fire .gd-float {
@@ -236,7 +265,7 @@ dialog:focus-visible {
 }
 
 .gd-small {
-  font-size: min(11vw, 11vh, 6rem);
+  font-size: min(15vw, 14vh, 8.5rem);
 }
 
 @keyframes gd-crown-drop {
@@ -269,18 +298,18 @@ dialog:focus-visible {
 
 @keyframes gd-flicker {
   50% {
-    filter: drop-shadow(0 2px 0 #a8360a) drop-shadow(0 3px 0 #6b1d04) drop-shadow(0 0 40px rgb(255 120 20 / 0.95))
-      drop-shadow(0 14px 20px rgb(0 0 0 / 0.65)) brightness(1.15);
+    text-shadow:
+      0 0.02em 0 #a8360a,
+      0 0.04em 0 #6b1d04,
+      0 0 0.35em rgb(255 120 20 / 0.95),
+      0 0.12em 0.15em rgb(0 0 0 / 0.7);
   }
 }
 
 @keyframes gd-ignite {
   0% {
-    filter: brightness(3) saturate(0.4);
+    opacity: 0.4;
     transform: scale(1.12);
-  }
-  100% {
-    filter: brightness(1);
   }
 }
 
@@ -346,6 +375,7 @@ dialog:focus-visible {
   .gd-pop,
   .gd-float,
   .gd-text,
+  .gd-text::after,
   .gd-crown,
   .gd-sparkle {
     animation: none;

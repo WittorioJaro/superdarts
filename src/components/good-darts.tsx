@@ -1154,21 +1154,27 @@ export function GoodDarts({ player }: { player?: string }) {
       <canvas ref={canvas} aria-hidden className="absolute inset-0 h-full w-full font-display" />
       <div className="gd-vignette absolute inset-0" />
       <div className="absolute inset-0 flex items-center justify-center">
-        <div className="gd-pop relative flex flex-col items-center">
+        <div className="gd-pop gd-panel relative flex flex-col items-center">
           {look === "crown" && name ? (
             <div data-gd-text className="gd-float flex flex-col items-center">
               <div data-gd-crown className="gd-crown">
                 <Crown />
               </div>
-              <span className="gd-text gd-name" style={{ fontSize: `min(${Math.min(22, 130 / name.length)}vw, 22vh, 13rem)` }}>
+              <span data-text={name} className="gd-text gd-name" style={{ fontSize: `min(${Math.min(22, 120 / name.length)}vw, 22vh, 14rem)` }}>
                 {name}
               </span>
-              <span className="gd-text gd-text-late gd-small">Good Darts!</span>
+              <span data-text="Good Darts!" className="gd-text gd-text-late gd-small">
+                Good Darts!
+              </span>
             </div>
           ) : (
             <div data-gd-text className="gd-float flex flex-col items-center">
-              <span className="gd-text">Good</span>
-              <span className="gd-text gd-text-late">Darts!</span>
+              <span data-text="Good" className="gd-text">
+                Good
+              </span>
+              <span data-text="Darts!" className="gd-text gd-text-late">
+                Darts!
+              </span>
             </div>
           )}
           <span className="gd-sub mt-3 font-display font-bold">
