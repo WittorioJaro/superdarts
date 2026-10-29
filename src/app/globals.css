@@ -165,7 +165,7 @@ dialog:focus-visible {
 .gd-text {
   position: relative;
   font-family: var(--font-display);
-  font-size: min(26vw, 32vh, 17rem);
+  font-size: min(20vw, 25vh, 13rem);
   font-weight: 800;
   font-style: italic;
   line-height: 0.85;
@@ -201,13 +201,13 @@ dialog:focus-visible {
 }
 
 .gd-panel {
-  border-radius: 2.5rem;
+  border-radius: 2rem;
   background: rgb(12 23 19 / 0.85);
   box-shadow:
     0 0 0 3px rgb(224 168 58 / 0.55),
     0 0 60px rgb(255 196 64 / 0.35),
     0 25px 50px rgb(0 0 0 / 0.6);
-  padding: min(1.5rem, 4vw) min(2.5rem, 5vw) min(1.25rem, 3vw);
+  padding: min(1.2rem, 3vw) min(2rem, 4vw) min(1rem, 2.5vw);
 }
 
 .gd-text-late::after {
@@ -215,7 +215,7 @@ dialog:focus-visible {
 }
 
 .gd-sub {
-  font-size: min(8vw, 9vh, 4rem);
+  font-size: min(6.2vw, 7vh, 3.1rem);
   letter-spacing: 0.2em;
   filter: drop-shadow(0 3px 6px rgb(0 0 0 / 0.8));
   animation: gd-rise 0.5s cubic-bezier(0.2, 0.9, 0.3, 1) 0.45s both;
@@ -249,7 +249,7 @@ dialog:focus-visible {
 
 /* The crowning: the crown falls onto the name, lands at 1.05s and settles with a wobble. */
 .gd-crown {
-  width: min(42vw, 26vh, 22rem);
+  width: min(33vw, 20vh, 17rem);
   aspect-ratio: 200 / 140;
   margin-bottom: -0.6rem;
   filter: drop-shadow(0 0 22px rgb(255 210 90 / 0.75)) drop-shadow(0 10px 14px rgb(0 0 0 / 0.6));
@@ -265,7 +265,7 @@ dialog:focus-visible {
 }
 
 .gd-small {
-  font-size: min(15vw, 14vh, 8.5rem);
+  font-size: min(11.5vw, 11vh, 6.5rem);
 }
 
 @keyframes gd-crown-drop {

@@ -1160,7 +1160,7 @@ export function GoodDarts({ player }: { player?: string }) {
               <div data-gd-crown className="gd-crown">
                 <Crown />
               </div>
-              <span data-text={name} className="gd-text gd-name" style={{ fontSize: `min(${Math.min(22, 120 / name.length)}vw, 22vh, 14rem)` }}>
+              <span data-text={name} className="gd-text gd-name" style={{ fontSize: `min(${Math.min(17, 94 / name.length)}vw, 17vh, 11rem)` }}>
                 {name}
               </span>
               <span data-text="Good Darts!" className="gd-text gd-text-late gd-small">
