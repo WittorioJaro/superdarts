@@ -103,7 +103,7 @@ Open http://localhost:3000 and sign in with Google.
 
 **Vercel:** import the repo, add the same environment variables, and deploy. `vercel.json` pins functions to `dub1` (Dublin). Change the region to the one closest to your Supabase database, or delete the file.
 
-**Any Node host:** `pnpm build && pnpm start`. Set the environment variables before the build, because `NEXT_PUBLIC_*` values and the static `/privacy` and `/terms` pages are baked in at build time.
+**Any Node host:** `pnpm build && pnpm start`. Set the environment variables before the build, because the `NEXT_PUBLIC_*` values are baked into the browser bundle.
 
 Then open the site on the tablet, add it to the home screen (Safari: **Share → Add to Home Screen**), and sign in once. The session lasts until you sign out.
 
