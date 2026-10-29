@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useId, useRef } from "react";
 
 export function Avatar({
   name,
@@ -59,9 +59,14 @@ export function Segmented<T extends string | number>({
   options: { value: T; label: string }[];
   onChange: (v: T) => void;
 }) {
+  const id = useId();
+  // A labelled group rather than a fieldset: WebKit lays a legend out in a flex fieldset with phantom space under
+  // the options, then drops it on a later layout, so the sheet jumped when an option was tapped.
   return (
-    <fieldset className="flex flex-col gap-2">
-      <legend className="mb-2 text-sm font-medium text-dim">{label}</legend>
+    <div role="group" aria-labelledby={id} className="flex flex-col gap-2">
+      <span id={id} className="text-sm font-medium text-dim">
+        {label}
+      </span>
       <div className="flex flex-wrap gap-2">
         {options.map((o) => {
           const active = o.value === value;
@@ -80,7 +85,7 @@ export function Segmented<T extends string | number>({
           );
         })}
       </div>
-    </fieldset>
+    </div>
   );
 }
 
